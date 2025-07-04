@@ -1,19 +1,12 @@
 const { App } = require('@slack/bolt');
 
-/**
- * This sample slack application uses SocketMode.
- * For the companion getting started setup guide, see:
- * https://tools.slack.dev/bolt-js/getting-started/
- */
-
-// Initializes your app with your bot token and app token
 const app = new App({
   token: process.env.SLACK_BOT_TOKEN,
   socketMode: true,
   appToken: process.env.SLACK_APP_TOKEN
 });
 
-// initial modal that opens when the user types /emojichart
+// first modal opened with /emojichart
 app.command('/emojichart', async ({ ack, body, client }) => {
   await ack(); 
 
@@ -95,31 +88,19 @@ app.command('/emojichart', async ({ ack, body, client }) => {
               action_id: 'insight_input',
               options: [
                 {
-                  text: {
-                    type: 'plain_text',
-                    text: 'Wrapped Proportional Unit Array'
-                  },
+                  text: { type: 'plain_text', text: 'Wrapped Proportional Unit Array' },
                   value: 'wrapped_unit_array'
                 },
                 {
-                  text: {
-                    type: 'plain_text',
-                    text: 'Univariate Time Series'
-                  },
+                  text: { type: 'plain_text', text: 'Univariate Time Series' },
                   value: 'univariate_time_series'
                 },
                 {
-                  text: {
-                    type: 'plain_text',
-                    text: 'Multivariate Emoji Grid'
-                  },
+                  text: { type: 'plain_text', text: 'Multivariate Emoji Grid' },
                   value: 'multivariate_emoji_grid'
                 },
                 {
-                  text: {
-                    type: 'plain_text',
-                    text: 'Stacked Horizontal Bar Chart'
-                  },
+                  text: { type: 'plain_text', text: 'Stacked Horizontal Bar Chart' },
                   value: 'stacked_bar_chart'
                 }
               ]
@@ -133,28 +114,115 @@ app.command('/emojichart', async ({ ack, body, client }) => {
   }
 });
 
+// handler for the first modal submission after user clicks next
+app.view('emoji_chart_modal', async ({ ack, view }) => {
+  // extract table input from first modal submission
+  const rawTableData = view.state.values.table_data_block.table_input.value;
 
-// handles what happens when a user clicks next in the modal
-app.view('emoji_chart_modal', async ({ ack, body, view, client }) => {
-  await ack();
+  // split table by newlines and commas to get headers
+  const lines = rawTableData.trim().split('\n');
+  const headers = lines.length > 0 ? lines[0].split(',').map(h => h.trim()) : [];
+
+  // fallback if headers can't be extracted
+  const columns = headers.length > 0 ? headers : ['Column 1', 'Column 2'];
+
+  const options = columns.map(col => ({
+    text: { type: 'plain_text', text: col },
+    value: col.toLowerCase().replace(/ /g, '_')
+  }));
+
+  await ack({
+    response_action: 'push',
+    view: {
+      type: 'modal',
+      callback_id: 'emoji_chart_finalize',
+      title: {
+        type: 'plain_text',
+        text: 'Create Emoji Chart',
+        emoji: true
+      },
+      submit: {
+        type: 'plain_text',
+        text: 'Generate',
+        emoji: true
+      },
+      close: {
+        type: 'plain_text',
+        text: 'Back',
+        emoji: true
+      },
+      blocks: [
+        {
+          type: 'input',
+          block_id: 'label_column_block',
+          label: { type: 'plain_text', text: 'Label Columns' },
+          element: {
+            type: 'multi_static_select',
+            action_id: 'label_columns',
+            placeholder: {
+              type: 'plain_text',
+              text: 'Select 1 or more'
+            },
+            options: options
+          }
+        },
+        {
+          type: 'input',
+          block_id: 'value_column_block',
+          label: { type: 'plain_text', text: 'Value Columns' },
+          element: {
+            type: 'multi_static_select',
+            action_id: 'value_columns',
+            placeholder: {
+              type: 'plain_text',
+              text: 'Select 1 or more'
+            },
+            options: options
+          }
+        },
+        {
+          type: 'input',
+          optional: true,
+          block_id: 'group_by_block',
+          label: { type: 'plain_text', text: 'Group by' },
+          element: {
+            type: 'static_select',
+            action_id: 'group_by',
+            placeholder: {
+              type: 'plain_text',
+              text: 'Select a column'
+            },
+            options: options
+          }
+        }
+      ]
+    }
+  });
+});
+
+// handler for the final modal submission ("Generate")
+app.view('emoji_chart_finalize', async ({ ack, body, view, client }) => {
+  await ack({ // force close all modal views
+    response_action: 'clear'
+  });
 
   const user = body.user.id;
-  const tableData = view.state.values.table_data_block.table_input.value;
 
-  // You can send a follow-up message or start next modal here
+  const labelCols = view.state.values.label_column_block.label_columns.selected_options.map(opt => opt.text.text);
+  const valueCols = view.state.values.value_column_block.value_columns.selected_options.map(opt => opt.text.text);
+  const groupBy = view.state.values.group_by_block?.group_by?.selected_option?.text?.text || 'None';
+
   try {
     await client.chat.postMessage({
       channel: user,
-      text: `Thanks! You submitted:\n\n${tableData}`
+      text: `*Chart Configuration:*\n• *Label Columns:* ${labelCols.join(', ')}\n• *Value Columns:* ${valueCols.join(', ')}\n• *Group By:* ${groupBy}`
     });
   } catch (error) {
     console.error(error);
   }
 });
 
-
 (async () => {
   await app.start(process.env.PORT || 3000);
   console.log('⚡️ Emoji Encoder is running!');
 })();
-
