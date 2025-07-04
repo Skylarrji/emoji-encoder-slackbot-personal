@@ -1,29 +1,44 @@
 {
   "display_information": {
-    "name": "Emoji Encoder"
+    "name": "Emoji Encoder",
+    "description": "Turn your CSV data into emoji charts!",
+    "background_color": "#000000"
   },
   "features": {
-    "app_home": {
-      "home_tab_enabled": false,
-      "messages_tab_enabled": true,
-      "messages_tab_read_only_enabled": false
-    },
+    "slash_commands": [
+      {
+        "command": "/emojichart",
+        "description": "Create an emoji-based chart from your data",
+        "should_escape": false
+      }
+    ],
     "bot_user": {
-      "display_name": "Emoji Encoder",
+      "display_name": "Emoji Encoder Bot",
       "always_online": true
     }
   },
   "oauth_config": {
     "scopes": {
-      "bot": ["channels:history", "chat:write", "im:history"]
+      "bot": [
+        "commands",
+        "chat:write",
+        "chat:write.public",
+        "users:read",
+        "files:read",
+        "im:write",
+        "channels:read",
+        "groups:read"
+      ]
     }
   },
   "settings": {
     "event_subscriptions": {
-      "bot_events": ["message.channels", "message.im"]
+      "request_url": "https://your-server.com/slack/events", 
+      "bot_events": []
     },
     "interactivity": {
-      "is_enabled": true
+      "is_enabled": true,
+      "request_url": "https://your-server.com/slack/interact" 
     },
     "org_deploy_enabled": false,
     "socket_mode_enabled": true,
