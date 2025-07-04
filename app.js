@@ -154,7 +154,7 @@ app.view('emoji_chart_finalize', async ({ ack }) => {
 
         // Walk Score
         { type: 'section', text: { type: 'mrkdwn', text: '*Walk Score*' } },
-        ...['low', 'medium', 'high'].map(level => ({
+        ...['low', 'medium', 'high'].map((level, i) => ({
           type: 'input',
           block_id: `walk_score_${level}`,
           label: { type: 'plain_text', text: `${level.charAt(0).toUpperCase() + level.slice(1)}` },
@@ -162,13 +162,14 @@ app.view('emoji_chart_finalize', async ({ ack }) => {
             type: 'static_select',
             action_id: 'walk_score_select',
             placeholder: { type: 'plain_text', text: 'Choose emoji' },
-            options: walkScoreEmojis
+            options: walkScoreEmojis,
+            initial_option: walkScoreEmojis[i]
           }
         })),
 
         // Bike Score
         { type: 'section', text: { type: 'mrkdwn', text: '*Bike Score*' } },
-        ...['low', 'medium', 'high'].map(level => ({
+        ...['low', 'medium', 'high'].map((level, i) => ({
           type: 'input',
           block_id: `bike_score_${level}`,
           label: { type: 'plain_text', text: `${level.charAt(0).toUpperCase() + level.slice(1)}` },
@@ -176,7 +177,8 @@ app.view('emoji_chart_finalize', async ({ ack }) => {
             type: 'static_select',
             action_id: 'bike_score_select',
             placeholder: { type: 'plain_text', text: 'Choose emoji' },
-            options: bikeScoreEmojis
+            options: bikeScoreEmojis,
+            initial_option: bikeScoreEmojis[i]
           }
         })),
 
@@ -200,7 +202,7 @@ app.view('emoji_chart_finalize', async ({ ack }) => {
 
         // Region section
         { type: 'section', text: { type: 'mrkdwn', text: '*Region*' } },
-        ...['northeast', 'midwest', 'northwest'].map(region => ({
+        ...['northeast', 'midwest', 'northwest'].map((region, i) => ({
           type: 'input',
           block_id: `region_${region}`,
           label: { type: 'plain_text', text: `${region.charAt(0).toUpperCase() + region.slice(1)}` },
@@ -208,7 +210,8 @@ app.view('emoji_chart_finalize', async ({ ack }) => {
             type: 'static_select',
             action_id: 'region_select',
             placeholder: { type: 'plain_text', text: 'Choose emoji' },
-            options: regionEmojis
+            options: regionEmojis,
+            initial_option: regionEmojis[i]
           }
         })),
 
