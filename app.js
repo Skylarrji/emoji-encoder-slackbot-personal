@@ -237,7 +237,7 @@ app.view('emoji_chart_finalize', async ({ ack }) => {
           block_id: 'preview_rich_text_block',
           label: {
             type: 'plain_text',
-            text: 'Emoji Chart Preview (Editable)',
+            text: 'Emoji Chart Preview (editable)',
             emoji: true
           },
           element: {
