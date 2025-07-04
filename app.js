@@ -228,6 +228,21 @@ app.view('emoji_chart_finalize', async ({ ack }) => {
               }
             ]
           }
+        },
+        {
+          type: 'input',
+          block_id: 'preview_rich_text_block',
+          label: {
+            type: 'plain_text',
+            text: 'Emoji Chart Preview (Editable)',
+            emoji: true
+          },
+          element: {
+            type: 'plain_text_input',
+            action_id: 'preview_rich_text_input',
+            multiline: true,
+            initial_value: `🌊  🚗 🚴‍♂️ LAX\n🌊 🛴 🚴‍♂️ SFO\n🚜 🚶🚲 CHI`
+          },
         }
       ]
     }
