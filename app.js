@@ -65,10 +65,9 @@ app.command('/emojichart', async ({ ack, body, client }) => {
               type: 'radio_buttons',
               action_id: 'insight_input',
               options: [
-                { text: { type: 'plain_text', text: 'Wrapped Proportional Unit Array' }, value: 'wrapped_unit_array' },
-                { text: { type: 'plain_text', text: 'Univariate Time Series' }, value: 'univariate_time_series' },
-                { text: { type: 'plain_text', text: 'Multivariate Emoji Grid' }, value: 'multivariate_emoji_grid' },
-                { text: { type: 'plain_text', text: 'Stacked Horizontal Bar Chart' }, value: 'stacked_bar_chart' }
+                { text: { type: 'plain_text', text: 'Comparison' }, value: 'comparison' },
+                { text: { type: 'plain_text', text: 'Trend' }, value: 'trend' },
+                { text: { type: 'plain_text', text: 'Porportion' }, value: 'porportion' },
               ]
             }
           }
