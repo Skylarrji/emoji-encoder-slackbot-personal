@@ -99,8 +99,29 @@ app.command("/emojichart", async ({ ack, body, client }) => {
   }
 });
 
+// Add a handler for table input changes to update the warning live
+app.action("table_input", async ({ body, ack, client }) => {
+  await ack();
+  const rawTableData = body.actions[0].value;
+  const blocks = buildFirstModalBlocks(rawTableData);
+  await client.views.update({
+    view_id: body.view.id,
+    hash: body.view.hash,
+    view: {
+      type: "modal",
+      callback_id: body.view.callback_id,
+      title: body.view.title,
+      submit: body.view.submit,
+      close: body.view.close,
+      blocks,
+    },
+  });
+});
+
 // Add action handler for insight selection
 app.action("insight_input", async ({ body, ack, client }) => {
+  console.log("insight_input action triggered");
+  console.log("Selected value:", body.actions[0].selected_option.value);
   await ack();
   const selected = body.actions[0].selected_option.value;
   // Copy current blocks except chart type block if present
@@ -147,18 +168,114 @@ app.action("insight_input", async ({ body, ack, client }) => {
   });
 });
 
-app.view("emoji_chart_modal", async ({ ack, view }) => {
-  const rawTableData = view.state.values.table_data_block.table_input.value;
+const parseTableData = (rawTableData) => {
   const lines = rawTableData.trim().split("\n");
-  const headers =
-    lines.length > 0 ? lines[0].split(",").map((h) => h.trim()) : [];
-  const columns = headers.length > 0 ? headers : ["Column 1", "Column 2"];
+  if (lines.length < 2) return { headers: [], rows: [] };
+  const headers = lines[0].split(",").map((h) => h.trim());
+  const rows = lines
+    .slice(1)
+    .map((line) => line.split(",").map((cell) => cell.trim()));
+  return { headers, rows };
+};
 
-  const options = columns.map((col) => ({
+const getCategoricalColumns = (headers, rows) => {
+  // Categorical: <=5 unique values, not all numeric
+  return headers.filter((col, idx) => {
+    const values = rows.map((row) => row[idx]);
+    const unique = Array.from(new Set(values));
+    const allNumeric = unique.every((v) => !isNaN(Number(v)));
+    return unique.length <= 5 && !allNumeric;
+  });
+};
+
+const getQuantitativeColumns = (headers, rows) => {
+  // Quantitative: all values numeric
+  return headers.filter((col, idx) => {
+    const values = rows.map((row) => row[idx]);
+    return values.every((v) => v !== "" && !isNaN(Number(v)));
+  });
+};
+
+app.view("emoji_chart_modal", async ({ ack, view, body, client }) => {
+  const rawTableData = view.state.values.table_data_block.table_input.value;
+  const { headers, rows } = parseTableData(rawTableData);
+  const hasCategorical = getCategoricalColumns(headers, rows).length > 0;
+  const hasQuantitative = getQuantitativeColumns(headers, rows).length > 0;
+
+  if (!hasCategorical || !hasQuantitative) {
+    await ack({
+      response_action: "errors",
+      errors: {
+        table_data_block:
+          "Your data must have at least one categorical column (≤5 unique values) and one numeric column for a bar chart",
+      },
+    });
+    return;
+  }
+
+  const chartType =
+    view.state.values.chart_type_block?.chart_type_input?.selected_option
+      ?.value;
+  // Store chartType in private_metadata for next view
+  const private_metadata = JSON.stringify({ rawTableData, chartType });
+
+  if (chartType === "bar_chart") {
+    // Only show the two questions for bar chart
+    const categorical = getCategoricalColumns(headers, rows);
+    const quantitative = getQuantitativeColumns(headers, rows);
+    const catOptions = categorical.map((col) => ({
+      text: { type: "plain_text", text: col },
+      value: col,
+    }));
+    const quantOptions = quantitative.map((col) => ({
+      text: { type: "plain_text", text: col },
+      value: col,
+    }));
+    await ack({
+      response_action: "push",
+      view: {
+        type: "modal",
+        callback_id: "bar_chart_column_select",
+        private_metadata,
+        title: { type: "plain_text", text: "Bar Chart Setup", emoji: true },
+        submit: { type: "plain_text", text: "Next", emoji: true },
+        close: { type: "plain_text", text: "Back", emoji: true },
+        blocks: [
+          {
+            type: "input",
+            block_id: "label_column_block",
+            label: {
+              type: "plain_text",
+              text: "Which column should be used as the label?",
+            },
+            element: {
+              type: "static_select",
+              action_id: "label_column",
+              options: catOptions,
+            },
+          },
+          {
+            type: "input",
+            block_id: "value_column_block",
+            label: {
+              type: "plain_text",
+              text: "Which numeric column should be visualized with emojis?",
+            },
+            element: {
+              type: "static_select",
+              action_id: "value_column",
+              options: quantOptions,
+            },
+          },
+        ],
+      },
+    });
+    return;
+  }
+  const options = headers.map((col) => ({
     text: { type: "plain_text", text: col },
     value: col.toLowerCase().replace(/ /g, "_"),
   }));
-
   await ack({
     response_action: "push",
     view: {
