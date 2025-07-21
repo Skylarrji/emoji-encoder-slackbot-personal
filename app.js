@@ -1,4 +1,6 @@
-const { App } = require("@slack/bolt");
+import pkg from '@slack/bolt';
+const { App } = pkg;
+import stringWidth from "string-width";
 
 const app = new App({
   token: process.env.SLACK_BOT_TOKEN,
@@ -129,8 +131,6 @@ app.action("table_input", async ({ body, ack, client }) => {
 
 // Add action handler for insight selection
 app.action("insight_input", async ({ body, ack, client }) => {
-  console.log("insight_input action triggered");
-  console.log("Selected value:", body.actions[0].selected_option.value);
   await ack();
   const selected = body.actions[0].selected_option.value;
   // Copy current blocks except chart type block if present
@@ -655,25 +655,67 @@ app.view("bar_chart_column_select", async ({ ack, view, body, client }) => {
           },
         },
         {
-          type: "input",
-          block_id: "preview_block",
-          label: { type: "plain_text", text: "Preview", emoji: true },
-          element: {
-            type: "plain_text_input",
-            action_id: "preview_input",
-            multiline: true,
-            initial_value: preview,
-          },
+          type: "section",
+          block_id: "preview_label_block",
+          text: {
+            type: "mrkdwn",
+            text: "*Preview*",
+          }
         },
+        {
+          type: "section",
+          block_id: "preview_block",
+          text: {
+            type: "mrkdwn",
+            text: "```\n" + preview + "\n```",
+          },
+        }
       ],
     },
   });
 });
 
-// Helper to generate the bar chart preview
-function generateBarChartPreview(labelEmoji, valueEmoji, showLegend) {
-  console.log("hey");
-  return `${labelEmoji}`;
+
+function generateBarChartPreview({
+  agg,
+  labelEmoji,
+  valueEmoji,
+  showLabelEmoji,
+  showLegend,
+  valueCol,
+  legendLabel,
+  maxEmojis = 10, // max emojis for the bar length
+}) {
+  const sorted = Object.entries(agg).sort((a, b) => b[1] - a[1]);
+  const maxValue = sorted[0]?.[1] || 1; // find max value to calculate the ratio
+
+  // compute the widest label for alignment
+  const maxLabelWidth = Math.max(
+    ...sorted.map(([label]) => {
+      const labelPart = showLabelEmoji && labelEmoji ? `${labelEmoji} ${label}` : label;
+      return stringWidth(labelPart);
+    })
+  );
+
+  let preview = sorted
+    .map(([label, val]) => {
+      const labelPart = showLabelEmoji && labelEmoji ? `${labelEmoji} ${label}` : label;
+      const paddingNeeded = maxLabelWidth - stringWidth(labelPart);
+      const paddedLabel = labelPart + " ".repeat(paddingNeeded);
+
+      // scale the bar length proportionally
+      const ratio = val / maxValue;
+      const emojiCount = Math.max(1, Math.round(ratio * maxEmojis));
+
+      return `${paddedLabel}  ${valueEmoji.repeat(emojiCount)}`;
+    })
+    .join("\n");
+
+  if (showLegend && valueEmoji) {
+    preview += `\n\nLegend: ${valueEmoji} = ${legendLabel || valueCol}`;
+  }
+
+  return preview;
 }
 
 // Add action handlers for live preview updates in bar_chart_emoji_customize
@@ -700,39 +742,47 @@ barChartEmojiActions.forEach((actionId) => {
         (opt) => opt.value === "show"
       ) || false;
 
-      
-    // const private_metadata = JSON.parse(view.private_metadata || "{}");
-    // const rawTableData = private_metadata.rawTableData;
-    // const labelCol = private_metadata.labelCol;
-    // const valueCol = private_metadata.valueCol;
-    // // Parse data
-    // const lines = rawTableData.trim().split("\n");
-    // const headers = lines[0].split(",").map((h) => h.trim());
-    // const rows = lines
-    //   .slice(1)
-    //   .map((line) => line.split(",").map((cell) => cell.trim()));
-    // const labelIdx = headers.indexOf(labelCol);
-    // const valueIdx = headers.indexOf(valueCol);
-    // const agg = {};
-    // rows.forEach((row) => {
-    //   const label = row[labelIdx];
-    //   const value = Number(row[valueIdx]);
-    //   agg[label] = (agg[label] || 0) + value;
-    // });
 
-    // // Generate preview
-    const preview = generateBarChartPreview(labelEmoji, valueEmoji, showLegend);
+    const private_metadata = JSON.parse(view.private_metadata || "{}");
+    const rawTableData = private_metadata.rawTableData;
+    const labelCol = private_metadata.labelCol;
+    const valueCol = private_metadata.valueCol;
+    // Parse data
+    const lines = rawTableData.trim().split("\n");
+    const headers = lines[0].split(",").map((h) => h.trim());
+    const rows = lines
+      .slice(1)
+      .map((line) => line.split(",").map((cell) => cell.trim()));
+    const labelIdx = headers.indexOf(labelCol);
+    const valueIdx = headers.indexOf(valueCol);
+    const agg = {};
+    rows.forEach((row) => {
+      const label = row[labelIdx];
+      const value = Number(row[valueIdx]);
+      agg[label] = (agg[label] || 0) + value;
+    });
+    const legendLabel = valueCol;
+
+    const preview = generateBarChartPreview({
+      agg,
+      labelEmoji: labelEmoji,
+      valueEmoji: valueEmoji,
+      showLabelEmoji: true,
+      showLegend: showLegend,
+      valueCol: valueCol,
+      legendLabel: legendLabel,
+    });
+
     // Update the modal
     const blocks = [...view.blocks];    
     // Find preview block and update its initial_value
-    const previewIdx = blocks.findIndex((b) => b.block_id.startsWith("preview_block"));
+    const previewIdx = blocks.findIndex((b) => b.block_id === "preview_block");
     if (previewIdx !== -1) {
       blocks[previewIdx] = {
         ...blocks[previewIdx],
-        block_id: `preview_block_${Date.now()}`,
-        element: {
-          ...blocks[previewIdx].element,
-          initial_value: preview,
+        text: {
+          type: "mrkdwn",
+          text: "```\n" + preview + "\n```",
         },
       };
     }
