@@ -6,15 +6,24 @@ const app = new App({
   appToken: process.env.SLACK_APP_TOKEN,
 });
 
-const emojiOptions = (emojis) =>
-  emojis.map((e) => ({
-    text: { type: "plain_text", text: e },
-    value: e,
-  }));
+const walkScoreEmojis = [
+  { text: { type: "plain_text", text: "🚶" }, value: "🚶" },
+  { text: { type: "plain_text", text: "🏃" }, value: "🏃" },
+  { text: { type: "plain_text", text: "🚴" }, value: "🚴" },
+];
 
-const walkScoreEmojis = emojiOptions(["🚗", "🚴", "🚶‍♂️"]);
-const bikeScoreEmojis = emojiOptions(["🚫", "🚲", "🚴‍♂️"]);
-const regionEmojis = emojiOptions(["🗽", "🚜", "🌊"]);
+const bikeScoreEmojis = [
+  { text: { type: "plain_text", text: "🚲" }, value: "🚲" },
+  { text: { type: "plain_text", text: "🚵" }, value: "🚵" },
+  { text: { type: "plain_text", text: "🏍️" }, value: "🏍️" },
+];
+
+const regionEmojis = [
+  { text: { type: "plain_text", text: "🌆" }, value: "🌆" },
+  { text: { type: "plain_text", text: "🌄" }, value: "🌄" },
+  { text: { type: "plain_text", text: "🏙️" }, value: "🏙️" },
+];
+
 
 app.command("/emojichart", async ({ ack, body, client }) => {
   await ack();
@@ -509,27 +518,28 @@ function recommendEmojis(columnName) {
   const name = columnName.toLowerCase();
   if (name.includes("city"))
     return [
-      { emoji: "🏙️", label: "City" },
-      { emoji: "🌆", label: "Cityscape" },
-      { emoji: "🗼", label: "Tower" },
+      { emoji: "🏙️" },
+      { emoji: "🌆" },
+      { emoji: "🗼" },
     ];
   if (name.includes("revenue"))
     return [
-      { emoji: "💰", label: "Money Bag" },
-      { emoji: "💵", label: "Dollar Bills" },
-      { emoji: "💲", label: "Dollar Sign" },
+      { emoji: "💰" },
+      { emoji: "💵" },
+      { emoji: "💲" },
     ];
-  if (name.includes("population"))
+  if (name.includes("population")) {
     return [
-      { emoji: "👥", label: "People" },
-      { emoji: "🧑‍🤝‍🧑", label: "Group" },
-      { emoji: "👨‍👩‍👧‍👦", label: "Family" },
+      { emoji: "👥" },
+      { emoji: "🧑‍🤝‍🧑" },
+      { emoji: "👨‍👩‍👧‍👦" },
     ];
+  }
   // fallback
   return [
-    { emoji: "🔹", label: "Blue Diamond" },
-    { emoji: "🔸", label: "Orange Diamond" },
-    { emoji: "🔺", label: "Red Triangle" },
+    { emoji: "🔹" },
+    { emoji: "🔸" },
+    { emoji: "🔺" },
   ];
 }
 
@@ -569,11 +579,12 @@ app.view("bar_chart_column_select", async ({ ack, view, body, client }) => {
   const maxLabelLen = Math.max(...sorted.map(([label]) => label.length));
   // Default preview: no label emoji, first value emoji, no legend
   const valueEmoji = valueEmojis[0].emoji;
+  const maxEmojis = 10;
   let preview = sorted
     .map(([label, val]) => {
       const padded = label.padEnd(maxLabelLen, " ");
       return `${padded} ${
-        valueEmoji.repeat(Math.round(val / 10)) || valueEmoji
+        valueEmoji.repeat(Math.round(3)) || valueEmoji
       }`;
     })
     .join("\n");
@@ -594,54 +605,45 @@ app.view("bar_chart_column_select", async ({ ack, view, body, client }) => {
       close: { type: "plain_text", text: "Back", emoji: true },
       blocks: [
         {
-          type: "input",
-          block_id: "show_label_emoji_block",
-          optional: true,
-          label: { type: "plain_text", text: "Show emoji next to label?" },
-          element: {
-            type: "checkboxes",
-            action_id: "show_label_emoji",
-            options: [
-              {
-                text: { type: "plain_text", text: "Show emoji for label" },
-                value: "show",
-              },
-            ],
-          },
-        },
-        {
-          type: "input",
+          type: "section",
           block_id: "label_emoji_block",
-          optional: true,
-          label: { type: "plain_text", text: `Choose emoji for ${labelCol}` },
-          element: {
+          text: {
+            type: "mrkdwn",
+            text: `*Choose emoji for ${labelCol}*`,
+          },
+          accessory: {
             type: "static_select",
             action_id: "label_emoji",
             options: labelEmojis.map((e) => ({
-              text: { type: "plain_text", text: `${e.emoji} ${e.label}` },
+              text: { type: "plain_text", text: `${e.emoji}` },
               value: e.emoji,
             })),
           },
         },
         {
-          type: "input",
+          type: "section",
           block_id: "value_emoji_block",
-          label: { type: "plain_text", text: `Choose emoji for ${valueCol}` },
-          element: {
+          text: {
+            type: "mrkdwn",
+            text: `*Choose emoji for ${valueCol}*`,
+          },
+          accessory: {
             type: "static_select",
             action_id: "value_emoji",
             options: valueEmojis.map((e) => ({
-              text: { type: "plain_text", text: `${e.emoji} ${e.label}` },
+              text: { type: "plain_text", text: `${e.emoji}` },
               value: e.emoji,
             })),
           },
         },
         {
-          type: "input",
+          type: "section",
           block_id: "show_legend_block",
-          optional: true,
-          label: { type: "plain_text", text: "Show legend?" },
-          element: {
+          text: {
+            type: "mrkdwn",
+            text: "*Show legend?*",
+          },
+          accessory: {
             type: "checkboxes",
             action_id: "show_legend",
             options: [
@@ -669,36 +671,13 @@ app.view("bar_chart_column_select", async ({ ack, view, body, client }) => {
 });
 
 // Helper to generate the bar chart preview
-function generateBarChartPreview({
-  agg,
-  labelEmoji,
-  valueEmoji,
-  showLabelEmoji,
-  showLegend,
-  labelCol,
-  valueCol,
-  legendLabel,
-}) {
-  const sorted = Object.entries(agg).sort((a, b) => b[1] - a[1]);
-  const maxLabelLen = Math.max(...sorted.map(([label]) => label.length));
-  let preview = sorted
-    .map(([label, val]) => {
-      const padded = label.padEnd(maxLabelLen, " ");
-      const labelPart = showLabelEmoji && labelEmoji ? `${labelEmoji} ` : "";
-      return `${labelPart}${padded} ${
-        valueEmoji.repeat(Math.round(val / 10)) || valueEmoji
-      }`;
-    })
-    .join("\n");
-  if (showLegend && valueEmoji) {
-    preview += `\nlegend: ${valueEmoji} = ${legendLabel || valueCol}`;
-  }
-  return preview;
+function generateBarChartPreview(labelEmoji, valueEmoji, showLegend) {
+  console.log("hey");
+  return `${labelEmoji}`;
 }
 
 // Add action handlers for live preview updates in bar_chart_emoji_customize
 const barChartEmojiActions = [
-  "show_label_emoji",
   "label_emoji",
   "value_emoji",
   "show_legend",
@@ -707,70 +686,68 @@ barChartEmojiActions.forEach((actionId) => {
   app.action(actionId, async ({ body, ack, client }) => {
     await ack();
     const view = body.view;
-    const state = view.state.values;
-    const private_metadata = JSON.parse(view.private_metadata || "{}");
-    const rawTableData = private_metadata.rawTableData;
-    const labelCol = private_metadata.labelCol;
-    const valueCol = private_metadata.valueCol;
-    // Parse data
-    const lines = rawTableData.trim().split("\n");
-    const headers = lines[0].split(",").map((h) => h.trim());
-    const rows = lines
-      .slice(1)
-      .map((line) => line.split(",").map((cell) => cell.trim()));
-    const labelIdx = headers.indexOf(labelCol);
-    const valueIdx = headers.indexOf(valueCol);
-    const agg = {};
-    rows.forEach((row) => {
-      const label = row[labelIdx];
-      const value = Number(row[valueIdx]);
-      agg[label] = (agg[label] || 0) + value;
-    });
+    const state = view?.state?.values || {};
     // Get current selections
-    const showLabelEmoji =
-      state.show_label_emoji_block?.show_label_emoji?.selected_options?.some(
-        (opt) => opt.value === "show"
-      );
     const labelEmoji =
       state.label_emoji_block?.label_emoji?.selected_option?.value || "";
+
     const valueEmoji =
       state.value_emoji_block?.value_emoji?.selected_option?.value ||
-      recommendEmojis(valueCol)[0].emoji;
+      "";
+
     const showLegend =
       state.show_legend_block?.show_legend?.selected_options?.some(
         (opt) => opt.value === "show"
-      );
-    const legendLabel = valueCol;
-    // Generate preview
-    const preview = generateBarChartPreview({
-      agg,
-      labelEmoji,
-      valueEmoji,
-      showLabelEmoji,
-      showLegend,
-      labelCol,
-      valueCol,
-      legendLabel,
-    });
+      ) || false;
+
+      
+    // const private_metadata = JSON.parse(view.private_metadata || "{}");
+    // const rawTableData = private_metadata.rawTableData;
+    // const labelCol = private_metadata.labelCol;
+    // const valueCol = private_metadata.valueCol;
+    // // Parse data
+    // const lines = rawTableData.trim().split("\n");
+    // const headers = lines[0].split(",").map((h) => h.trim());
+    // const rows = lines
+    //   .slice(1)
+    //   .map((line) => line.split(",").map((cell) => cell.trim()));
+    // const labelIdx = headers.indexOf(labelCol);
+    // const valueIdx = headers.indexOf(valueCol);
+    // const agg = {};
+    // rows.forEach((row) => {
+    //   const label = row[labelIdx];
+    //   const value = Number(row[valueIdx]);
+    //   agg[label] = (agg[label] || 0) + value;
+    // });
+
+    // // Generate preview
+    const preview = generateBarChartPreview(labelEmoji, valueEmoji, showLegend);
     // Update the modal
-    const blocks = [...view.blocks];
+    const blocks = [...view.blocks];    
     // Find preview block and update its initial_value
-    const previewIdx = blocks.findIndex((b) => b.block_id === "preview_block");
+    const previewIdx = blocks.findIndex((b) => b.block_id.startsWith("preview_block"));
     if (previewIdx !== -1) {
       blocks[previewIdx] = {
         ...blocks[previewIdx],
+        block_id: `preview_block_${Date.now()}`,
         element: {
           ...blocks[previewIdx].element,
           initial_value: preview,
         },
       };
     }
+
     await client.views.update({
       view_id: view.id,
       hash: view.hash,
       view: {
-        ...view,
-        blocks,
+        type: view.type,
+        title: view.title,
+        blocks: blocks,
+        callback_id: view.callback_id,
+        private_metadata: view.private_metadata,
+        submit: view.submit,
+        close: view.close,
       },
     });
   });
