@@ -27,8 +27,13 @@ const regionEmojis = [
 ];
 
 
-app.command("/emojichart", async ({ ack, body, client }) => {
+app.command("/emojichart", async ({ command, ack, body, client }) => {
   await ack();
+
+  const metadata = {
+    channelId: command.channel_id,
+    threadTs: command.thread_ts || null,
+  };
 
   try {
     await client.views.open({
@@ -36,6 +41,7 @@ app.command("/emojichart", async ({ ack, body, client }) => {
       view: {
         type: "modal",
         callback_id: "emoji_chart_modal",
+        private_metadata: JSON.stringify(metadata),
         title: { type: "plain_text", text: "Create Emoji Chart", emoji: true },
         submit: { type: "plain_text", text: "Next", emoji: true },
         close: { type: "plain_text", text: "Cancel", emoji: true },
@@ -121,6 +127,7 @@ app.action("table_input", async ({ body, ack, client }) => {
     view: {
       type: "modal",
       callback_id: body.view.callback_id,
+      private_metadata: body.view.private_metadata,
       title: body.view.title,
       submit: body.view.submit,
       close: body.view.close,
@@ -169,6 +176,7 @@ app.action("insight_input", async ({ body, ack, client }) => {
     view: {
       type: "modal",
       callback_id: body.view.callback_id,
+      private_metadata: body.view.private_metadata,
       title: body.view.title,
       submit: body.view.submit,
       close: body.view.close,
@@ -225,8 +233,14 @@ app.view("emoji_chart_modal", async ({ ack, view, body, client }) => {
   const chartType =
     view.state.values.chart_type_block?.chart_type_input?.selected_option
       ?.value;
+
   // Store chartType in private_metadata for next view
-  const private_metadata = JSON.stringify({ rawTableData, chartType });
+  const oldMetadata = JSON.parse(view.private_metadata || "{}");
+  const private_metadata = JSON.stringify({
+    ...oldMetadata,
+    rawTableData,
+    chartType,
+  });
 
   if (chartType === "bar_chart") {
     // Only show the two questions for bar chart
@@ -245,7 +259,7 @@ app.view("emoji_chart_modal", async ({ ack, view, body, client }) => {
       view: {
         type: "modal",
         callback_id: "bar_chart_column_select",
-        private_metadata,
+        private_metadata: private_metadata,
         title: { type: "plain_text", text: "Bar Chart Setup", emoji: true },
         submit: { type: "plain_text", text: "Next", emoji: true },
         close: { type: "plain_text", text: "Back", emoji: true },
@@ -589,17 +603,20 @@ app.view("bar_chart_column_select", async ({ ack, view, body, client }) => {
     })
     .join("\n");
 
+  const new_private_metadata = JSON.stringify({
+    ...private_metadata,
+    rawTableData,
+    chartType,
+    labelCol,
+    valueCol,
+  });
+
   await ack({
     response_action: "push",
     view: {
       type: "modal",
       callback_id: "bar_chart_emoji_customize",
-      private_metadata: JSON.stringify({
-        rawTableData,
-        chartType,
-        labelCol,
-        valueCol,
-      }),
+      private_metadata: new_private_metadata,
       title: { type: "plain_text", text: "Bar Chart Emojis", emoji: true },
       submit: { type: "plain_text", text: "Finish", emoji: true },
       close: { type: "plain_text", text: "Back", emoji: true },
@@ -805,7 +822,7 @@ barChartEmojiActions.forEach((actionId) => {
 
 app.view("bar_chart_emoji_customize", async ({ ack, body, view, client }) => {
   await ack({
-    response_action: "clear", 
+    response_action: "clear",
   });
 
   const user = body.user.id;
@@ -849,11 +866,14 @@ app.view("bar_chart_emoji_customize", async ({ ack, body, view, client }) => {
     legendLabel: valueCol,
   });
 
+  const channel = private_metadata.channelId || user;
+  const thread_ts = private_metadata.threadTs;
 
   try {
     await client.chat.postMessage({
-      channel: user,
+      channel,
       text: `*Your Emoji Bar Chart:*\n\`\`\`\n${preview}\n\`\`\``,
+      ...(thread_ts ? { thread_ts } : {}), // post as thread reply if thread_ts exists
     });
   } catch (error) {
     console.error("Error posting chart message:", error);
