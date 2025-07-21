@@ -803,6 +803,64 @@ barChartEmojiActions.forEach((actionId) => {
   });
 });
 
+app.view("bar_chart_emoji_customize", async ({ ack, body, view, client }) => {
+  await ack({
+    response_action: "clear", 
+  });
+
+  const user = body.user.id;
+  const state = view?.state?.values || {};
+  const private_metadata = JSON.parse(view.private_metadata || "{}");
+  const rawTableData = private_metadata.rawTableData;
+  const labelCol = private_metadata.labelCol;
+  const valueCol = private_metadata.valueCol;
+
+  const labelEmoji =
+    state.label_emoji_block?.label_emoji?.selected_option?.value || "";
+  const valueEmoji =
+    state.value_emoji_block?.value_emoji?.selected_option?.value || "";
+  const showLegend =
+    state.show_legend_block?.show_legend?.selected_options?.some(
+      (opt) => opt.value === "show"
+    ) || false;
+
+  // Parse data
+  const lines = rawTableData.trim().split("\n");
+  const headers = lines[0].split(",").map((h) => h.trim());
+  const rows = lines
+    .slice(1)
+    .map((line) => line.split(",").map((cell) => cell.trim()));
+  const labelIdx = headers.indexOf(labelCol);
+  const valueIdx = headers.indexOf(valueCol);
+  const agg = {};
+  rows.forEach((row) => {
+    const label = row[labelIdx];
+    const value = Number(row[valueIdx]);
+    agg[label] = (agg[label] || 0) + value;
+  });
+
+  const preview = generateBarChartPreview({
+    agg,
+    labelEmoji,
+    valueEmoji,
+    showLabelEmoji: true,
+    showLegend,
+    valueCol,
+    legendLabel: valueCol,
+  });
+
+
+  try {
+    await client.chat.postMessage({
+      channel: user,
+      text: `*Your Emoji Bar Chart:*\n\`\`\`\n${preview}\n\`\`\``,
+    });
+  } catch (error) {
+    console.error("Error posting chart message:", error);
+  }
+});
+
+
 (async () => {
   await app.start(process.env.PORT || 3000);
   console.log("⚡️ Emoji Encoder is running!");
