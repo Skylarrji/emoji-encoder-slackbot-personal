@@ -812,10 +812,16 @@ function generateSingleValueChartPreview({
 
   // Auto-calculate thresholds
   const values = entries.map(([, val]) => val).sort((a, b) => a - b);
-  const autoLow = values[Math.floor(values.length / 3)];
-  const autoHigh = values[Math.floor((2 * values.length) / 3)];
-  const lowT = lowThreshold ?? autoLow;
-  const highT = highThreshold ?? autoHigh;
+  const min = values[0];
+  const max = values[values.length - 1];
+  const range = max - min;
+
+  const autoLow = min + range / 3;
+  const autoHigh = min + (2 * range) / 3;
+
+  // add user input lowThreshold and highThreshold if possible
+  const lowT = autoLow;
+  const highT = autoHigh;
 
   const maxLabelWidth = Math.max(
     ...entries.map(([label]) => {
@@ -1099,7 +1105,7 @@ app.view("single_value_column_select", async ({ ack, view, body, client }) => {
         {
           type: "input",
           block_id: "low_threshold_block_svc",
-          label: { type: "plain_text", text: "Low threshold (optional)" },
+          label: { type: "plain_text", text: "Low threshold " },
           element: {
             type: "plain_text_input",
             action_id: "low_threshold_svc",
@@ -1113,7 +1119,7 @@ app.view("single_value_column_select", async ({ ack, view, body, client }) => {
         {
           type: "input",
           block_id: "high_threshold_block_svc",
-          label: { type: "plain_text", text: "High threshold (optional)" },
+          label: { type: "plain_text", text: "High threshold" },
           element: {
             type: "plain_text_input",
             action_id: "high_threshold_svc",
