@@ -1,4 +1,4 @@
-import pkg from '@slack/bolt';
+import pkg from "@slack/bolt";
 const { App } = pkg;
 import stringWidth from "string-width";
 
@@ -25,7 +25,6 @@ const regionEmojis = [
   { text: { type: "plain_text", text: "🌄" }, value: "🌄" },
   { text: { type: "plain_text", text: "🏙️" }, value: "🏙️" },
 ];
-
 
 app.command("/emojichart", async ({ command, ack, body, client }) => {
   await ack();
@@ -116,26 +115,6 @@ app.command("/emojichart", async ({ command, ack, body, client }) => {
   }
 });
 
-// Add a handler for table input changes to update the warning live
-app.action("table_input", async ({ body, ack, client }) => {
-  await ack();
-  const rawTableData = body.actions[0].value;
-  const blocks = buildFirstModalBlocks(rawTableData);
-  await client.views.update({
-    view_id: body.view.id,
-    hash: body.view.hash,
-    view: {
-      type: "modal",
-      callback_id: body.view.callback_id,
-      private_metadata: body.view.private_metadata,
-      title: body.view.title,
-      submit: body.view.submit,
-      close: body.view.close,
-      blocks,
-    },
-  });
-});
-
 // Add action handler for insight selection
 app.action("insight_input", async ({ body, ack, client }) => {
   await ack();
@@ -215,6 +194,9 @@ const getQuantitativeColumns = (headers, rows) => {
 
 app.view("emoji_chart_modal", async ({ ack, view, body, client }) => {
   const rawTableData = view.state.values.table_data_block.table_input.value;
+  const chartTitle =
+    view.state.values.chart_title_block.chart_title_input.value;
+
   const { headers, rows } = parseTableData(rawTableData);
   const hasCategorical = getCategoricalColumns(headers, rows).length > 0;
   const hasQuantitative = getQuantitativeColumns(headers, rows).length > 0;
@@ -234,12 +216,13 @@ app.view("emoji_chart_modal", async ({ ack, view, body, client }) => {
     view.state.values.chart_type_block?.chart_type_input?.selected_option
       ?.value;
 
-  // Store chartType in private_metadata for next view
+  // Store chartType and chartTitle in private_metadata for next view
   const oldMetadata = JSON.parse(view.private_metadata || "{}");
   const private_metadata = JSON.stringify({
     ...oldMetadata,
     rawTableData,
     chartType,
+    chartTitle,
   });
 
   if (chartType === "bar_chart") {
@@ -531,30 +514,14 @@ app.view("emoji_customization_modal", async ({ ack, body, view, client }) => {
 function recommendEmojis(columnName) {
   const name = columnName.toLowerCase();
   if (name.includes("city"))
-    return [
-      { emoji: "🏙️" },
-      { emoji: "🌆" },
-      { emoji: "🗼" },
-    ];
+    return [{ emoji: "🏙️" }, { emoji: "🌆" }, { emoji: "🗼" }];
   if (name.includes("revenue"))
-    return [
-      { emoji: "💰" },
-      { emoji: "💵" },
-      { emoji: "💲" },
-    ];
+    return [{ emoji: "💰" }, { emoji: "💵" }, { emoji: "💲" }];
   if (name.includes("population")) {
-    return [
-      { emoji: "👥" },
-      { emoji: "🧑‍🤝‍🧑" },
-      { emoji: "👨‍👩‍👧‍👦" },
-    ];
+    return [{ emoji: "👥" }, { emoji: "🧑‍🤝‍🧑" }, { emoji: "👨‍👩‍👧‍👦" }];
   }
   // fallback
-  return [
-    { emoji: "🔹" },
-    { emoji: "🔸" },
-    { emoji: "🔺" },
-  ];
+  return [{ emoji: "🔹" }, { emoji: "🔸" }, { emoji: "🔺" }];
 }
 
 // Handler for bar_chart_column_select submission
@@ -562,6 +529,8 @@ app.view("bar_chart_column_select", async ({ ack, view, body, client }) => {
   const private_metadata = JSON.parse(view.private_metadata || "{}");
   const rawTableData = private_metadata.rawTableData;
   const chartType = private_metadata.chartType;
+  const chartTitle = private_metadata.chartTitle;
+
   const labelCol =
     view.state.values.label_column_block.label_column.selected_option.value;
   const valueCol =
@@ -571,7 +540,7 @@ app.view("bar_chart_column_select", async ({ ack, view, body, client }) => {
   const labelEmojis = recommendEmojis(labelCol);
   const valueEmojis = recommendEmojis(valueCol);
 
-  // Prepare preview (initial, no emoji for label, first emoji for value)
+  // Prepare preview (initial, no emoji for label, first value emoji, no legend)
   // Parse data
   const lines = rawTableData.trim().split("\n");
   const headers = lines[0].split(",").map((h) => h.trim());
@@ -587,21 +556,9 @@ app.view("bar_chart_column_select", async ({ ack, view, body, client }) => {
     const value = Number(row[valueIdx]);
     agg[label] = (agg[label] || 0) + value;
   });
-  // Sort by value descending
-  const sorted = Object.entries(agg).sort((a, b) => b[1] - a[1]);
-  // Find max label length for padding
-  const maxLabelLen = Math.max(...sorted.map(([label]) => label.length));
-  // Default preview: no label emoji, first value emoji, no legend
-  const valueEmoji = valueEmojis[0].emoji;
-  const maxEmojis = 10;
-  let preview = sorted
-    .map(([label, val]) => {
-      const padded = label.padEnd(maxLabelLen, " ");
-      return `${padded} ${
-        valueEmoji.repeat(Math.round(3)) || valueEmoji
-      }`;
-    })
-    .join("\n");
+
+  // default is just the title name
+  let preview = `${chartTitle}`;
 
   const new_private_metadata = JSON.stringify({
     ...private_metadata,
@@ -609,6 +566,7 @@ app.view("bar_chart_column_select", async ({ ack, view, body, client }) => {
     chartType,
     labelCol,
     valueCol,
+    chartTitle,
   });
 
   await ack({
@@ -655,6 +613,30 @@ app.view("bar_chart_column_select", async ({ ack, view, body, client }) => {
         },
         {
           type: "section",
+          block_id: "show_title_block",
+          text: {
+            type: "mrkdwn",
+            text: "*Show chart title?*",
+          },
+          accessory: {
+            type: "checkboxes",
+            action_id: "show_title_checkbox",
+            options: [
+              {
+                text: { type: "plain_text", text: "Show chart title" },
+                value: "show",
+              },
+            ],
+            initial_options: [
+              {
+                text: { type: "plain_text", text: "Show chart title" },
+                value: "show",
+              },
+            ],
+          },
+        },
+        {
+          type: "section",
           block_id: "show_legend_block",
           text: {
             type: "mrkdwn",
@@ -677,7 +659,7 @@ app.view("bar_chart_column_select", async ({ ack, view, body, client }) => {
           text: {
             type: "mrkdwn",
             text: "*Preview*",
-          }
+          },
         },
         {
           type: "section",
@@ -686,12 +668,11 @@ app.view("bar_chart_column_select", async ({ ack, view, body, client }) => {
             type: "mrkdwn",
             text: "```\n" + preview + "\n```",
           },
-        }
+        },
       ],
     },
   });
 });
-
 
 function generateBarChartPreview({
   agg,
@@ -701,6 +682,8 @@ function generateBarChartPreview({
   showLegend,
   valueCol,
   legendLabel,
+  chartTitle,
+  showTitle = true,
   maxEmojis = 10, // max emojis for the bar length
 }) {
   const sorted = Object.entries(agg).sort((a, b) => b[1] - a[1]);
@@ -709,14 +692,16 @@ function generateBarChartPreview({
   // compute the widest label for alignment
   const maxLabelWidth = Math.max(
     ...sorted.map(([label]) => {
-      const labelPart = showLabelEmoji && labelEmoji ? `${labelEmoji} ${label}` : label;
+      const labelPart =
+        showLabelEmoji && labelEmoji ? `${labelEmoji} ${label}` : label;
       return stringWidth(labelPart);
     })
   );
 
   let preview = sorted
     .map(([label, val]) => {
-      const labelPart = showLabelEmoji && labelEmoji ? `${labelEmoji} ${label}` : label;
+      const labelPart =
+        showLabelEmoji && labelEmoji ? `${labelEmoji} ${label}` : label;
       const paddingNeeded = maxLabelWidth - stringWidth(labelPart);
       const paddedLabel = labelPart + " ".repeat(paddingNeeded);
 
@@ -731,7 +716,9 @@ function generateBarChartPreview({
   if (showLegend && valueEmoji) {
     preview += `\n\nLegend: ${valueEmoji} = ${legendLabel || valueCol}`;
   }
-
+  if (showTitle && chartTitle) {
+    preview = `${chartTitle}\n\n${preview}`;
+  }
   return preview;
 }
 
@@ -740,6 +727,7 @@ const barChartEmojiActions = [
   "label_emoji",
   "value_emoji",
   "show_legend",
+  "show_title_checkbox",
 ];
 barChartEmojiActions.forEach((actionId) => {
   app.action(actionId, async ({ body, ack, client }) => {
@@ -751,19 +739,23 @@ barChartEmojiActions.forEach((actionId) => {
       state.label_emoji_block?.label_emoji?.selected_option?.value || "";
 
     const valueEmoji =
-      state.value_emoji_block?.value_emoji?.selected_option?.value ||
-      "";
+      state.value_emoji_block?.value_emoji?.selected_option?.value || "";
 
     const showLegend =
       state.show_legend_block?.show_legend?.selected_options?.some(
         (opt) => opt.value === "show"
       ) || false;
 
+    const showTitle =
+      state.show_title_block?.show_title_checkbox?.selected_options?.some(
+        (opt) => opt.value === "show"
+      ) ?? true;
 
     const private_metadata = JSON.parse(view.private_metadata || "{}");
     const rawTableData = private_metadata.rawTableData;
     const labelCol = private_metadata.labelCol;
     const valueCol = private_metadata.valueCol;
+    const chartTitle = private_metadata.chartTitle;
     // Parse data
     const lines = rawTableData.trim().split("\n");
     const headers = lines[0].split(",").map((h) => h.trim());
@@ -788,10 +780,12 @@ barChartEmojiActions.forEach((actionId) => {
       showLegend: showLegend,
       valueCol: valueCol,
       legendLabel: legendLabel,
+      chartTitle,
+      showTitle,
     });
 
     // Update the modal
-    const blocks = [...view.blocks];    
+    const blocks = [...view.blocks];
     // Find preview block and update its initial_value
     const previewIdx = blocks.findIndex((b) => b.block_id === "preview_block");
     if (previewIdx !== -1) {
@@ -831,6 +825,7 @@ app.view("bar_chart_emoji_customize", async ({ ack, body, view, client }) => {
   const rawTableData = private_metadata.rawTableData;
   const labelCol = private_metadata.labelCol;
   const valueCol = private_metadata.valueCol;
+  const chartTitle = private_metadata.chartTitle;
 
   const labelEmoji =
     state.label_emoji_block?.label_emoji?.selected_option?.value || "";
@@ -840,6 +835,10 @@ app.view("bar_chart_emoji_customize", async ({ ack, body, view, client }) => {
     state.show_legend_block?.show_legend?.selected_options?.some(
       (opt) => opt.value === "show"
     ) || false;
+  const showTitle =
+    state.show_title_block?.show_title_checkbox?.selected_options?.some(
+      (opt) => opt.value === "show"
+    ) ?? true;
 
   // Parse data
   const lines = rawTableData.trim().split("\n");
@@ -864,6 +863,8 @@ app.view("bar_chart_emoji_customize", async ({ ack, body, view, client }) => {
     showLegend,
     valueCol,
     legendLabel: valueCol,
+    chartTitle,
+    showTitle,
   });
 
   const channel = private_metadata.channelId || user;
@@ -872,14 +873,13 @@ app.view("bar_chart_emoji_customize", async ({ ack, body, view, client }) => {
   try {
     await client.chat.postMessage({
       channel,
-      text: `*Your Emoji Bar Chart:*\n\`\`\`\n${preview}\n\`\`\``,
+      text: `\n\`\`\`\n${preview}\`\`\`\n`,
       ...(thread_ts ? { thread_ts } : {}), // post as thread reply if thread_ts exists
     });
   } catch (error) {
     console.error("Error posting chart message:", error);
   }
 });
-
 
 (async () => {
   await app.start(process.env.PORT || 3000);
