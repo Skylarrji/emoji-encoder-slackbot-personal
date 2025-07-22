@@ -8,23 +8,6 @@ const app = new App({
   appToken: process.env.SLACK_APP_TOKEN,
 });
 
-const walkScoreEmojis = [
-  { text: { type: "plain_text", text: "🚶" }, value: "🚶" },
-  { text: { type: "plain_text", text: "🏃" }, value: "🏃" },
-  { text: { type: "plain_text", text: "🚴" }, value: "🚴" },
-];
-
-const bikeScoreEmojis = [
-  { text: { type: "plain_text", text: "🚲" }, value: "🚲" },
-  { text: { type: "plain_text", text: "🚵" }, value: "🚵" },
-  { text: { type: "plain_text", text: "🏍️" }, value: "🏍️" },
-];
-
-const regionEmojis = [
-  { text: { type: "plain_text", text: "🌆" }, value: "🌆" },
-  { text: { type: "plain_text", text: "🌄" }, value: "🌄" },
-  { text: { type: "plain_text", text: "🏙️" }, value: "🏙️" },
-];
 
 app.command("/emojichart", async ({ command, ack, body, client }) => {
   await ack();
@@ -389,187 +372,9 @@ app.view("emoji_chart_modal", async ({ ack, view, body, client }) => {
   });
 });
 
-app.view("emoji_chart_finalize", async ({ ack }) => {
-  await ack({
-    response_action: "push",
-    view: {
-      type: "modal",
-      callback_id: "emoji_customization_modal",
-      title: { type: "plain_text", text: "Customize Emojis", emoji: true },
-      submit: { type: "plain_text", text: "Preview", emoji: true },
-      close: { type: "plain_text", text: "Back", emoji: true },
-      blocks: [
-        {
-          type: "section",
-          text: { type: "mrkdwn", text: "*Emoji recommendations*" },
-        },
 
-        // Walk Score
-        { type: "section", text: { type: "mrkdwn", text: "*Walk Score*" } },
-        ...["low", "medium", "high"].map((level, i) => ({
-          type: "input",
-          block_id: `walk_score_${level}`,
-          label: {
-            type: "plain_text",
-            text: `${level.charAt(0).toUpperCase() + level.slice(1)}`,
-          },
-          element: {
-            type: "static_select",
-            action_id: "walk_score_select",
-            placeholder: { type: "plain_text", text: "Choose emoji" },
-            options: walkScoreEmojis,
-            initial_option: walkScoreEmojis[i],
-          },
-        })),
 
-        // Bike Score
-        { type: "section", text: { type: "mrkdwn", text: "*Bike Score*" } },
-        ...["low", "medium", "high"].map((level, i) => ({
-          type: "input",
-          block_id: `bike_score_${level}`,
-          label: {
-            type: "plain_text",
-            text: `${level.charAt(0).toUpperCase() + level.slice(1)}`,
-          },
-          element: {
-            type: "static_select",
-            action_id: "bike_score_select",
-            placeholder: { type: "plain_text", text: "Choose emoji" },
-            options: bikeScoreEmojis,
-            initial_option: bikeScoreEmojis[i],
-          },
-        })),
-
-        // Toggle for legend below label columns
-        {
-          type: "input",
-          optional: true,
-          block_id: "show_legend_score",
-          label: {
-            type: "plain_text",
-            text: "Show legend below chart for label columns",
-          },
-          element: {
-            type: "checkboxes",
-            action_id: "legend_score",
-            options: [
-              {
-                text: { type: "plain_text", text: "Show legend below chart" },
-                value: "show",
-              },
-            ],
-          },
-        },
-
-        // Region section
-        { type: "section", text: { type: "mrkdwn", text: "*Region*" } },
-        ...["northeast", "midwest", "northwest"].map((region, i) => ({
-          type: "input",
-          block_id: `region_${region}`,
-          label: {
-            type: "plain_text",
-            text: `${region.charAt(0).toUpperCase() + region.slice(1)}`,
-          },
-          element: {
-            type: "static_select",
-            action_id: "region_select",
-            placeholder: { type: "plain_text", text: "Choose emoji" },
-            options: regionEmojis,
-            initial_option: regionEmojis[i],
-          },
-        })),
-
-        // Toggle for legend below value columns
-        {
-          type: "input",
-          optional: true,
-          block_id: "show_legend_region",
-          label: {
-            type: "plain_text",
-            text: "Show legend below chart for value columns",
-          },
-          element: {
-            type: "checkboxes",
-            action_id: "legend_region",
-            options: [
-              {
-                text: { type: "plain_text", text: "Show legend below chart" },
-                value: "show",
-              },
-            ],
-          },
-        },
-        {
-          type: "input",
-          block_id: "preview_rich_text_block",
-          label: {
-            type: "plain_text",
-            text: "Emoji Chart Preview (editable)",
-            emoji: true,
-          },
-          element: {
-            type: "plain_text_input",
-            action_id: "preview_rich_text_input",
-            multiline: true,
-            initial_value: `🌊  🚗 🚴‍♂️ LAX\n🌊 🛴 🚴‍♂️ SFO\n🚜 🚶🚲 CHI`,
-          },
-        },
-      ],
-    },
-  });
-});
-
-app.view("emoji_customization_modal", async ({ ack, body, view, client }) => {
-  await ack({ response_action: "clear" });
-  const user = body.user.id;
-
-  const walkBikeLevels = ["low", "medium", "high"];
-  const walkBikeEmojis = walkBikeLevels
-    .map((level) => {
-      const walk =
-        view.state.values[`walk_score_${level}`]?.walk_score_select
-          ?.selected_option?.text?.text || "";
-      const bike =
-        view.state.values[`bike_score_${level}`]?.bike_score_select
-          ?.selected_option?.text?.text || "";
-      return `• *${
-        level.charAt(0).toUpperCase() + level.slice(1)
-      }*: Walk ${walk}, Bike ${bike}`;
-    })
-    .join("\n");
-
-  const regions = ["northeast", "midwest", "northwest"];
-  const regionEmojisText = regions
-    .map((region) => {
-      const emoji =
-        view.state.values[`region_${region}`]?.region_select?.selected_option
-          ?.text?.text || "";
-      return `• *${
-        region.charAt(0).toUpperCase() + region.slice(1)
-      }*: ${emoji}`;
-    })
-    .join("\n");
-
-  const legendScore =
-    view.state.values.show_legend_score?.legend_score?.selected_options
-      ?.length > 0;
-  const legendRegion =
-    view.state.values.show_legend_region?.legend_region?.selected_options
-      ?.length > 0;
-
-  try {
-    await client.chat.postMessage({
-      channel: user,
-      text: `*Emoji Chart Configuration Preview:*\n\n*Walk/Bike Score Emojis:*\n${walkBikeEmojis}\n\n*Region Emojis:*\n${regionEmojisText}\n\n*Show Legends:*\n• Label Legend: ${
-        legendScore ? "Yes" : "No"
-      }\n• Value Legend: ${legendRegion ? "Yes" : "No"}`,
-    });
-  } catch (error) {
-    console.error(error);
-  }
-});
-
-// Add a simple emoji recommendation function
+// simple emoji recommendation function (stand in for backend integration)
 function recommendEmojis(columnName) {
   const name = columnName.toLowerCase();
   if (name.includes("city"))
@@ -583,7 +388,149 @@ function recommendEmojis(columnName) {
   return [{ emoji: "🔹" }, { emoji: "🔸" }, { emoji: "🔺" }];
 }
 
-// Handler for bar_chart_column_select submission
+
+/// BAR CHART ///
+function generateBarChartPreview({
+  agg,
+  labelEmoji,
+  valueEmoji,
+  showLabelEmoji,
+  showLegend,
+  valueCol,
+  legendLabel,
+  chartTitle,
+  showTitle = true,
+  maxEmojis = 10, // max emojis for the bar length
+}) {
+  const sorted = Object.entries(agg).sort((a, b) => b[1] - a[1]);
+  const maxValue = sorted[0]?.[1] || 1; // find max value to calculate the ratio
+
+  // compute the widest label for alignment
+  const maxLabelWidth = Math.max(
+    ...sorted.map(([label]) => {
+      const labelPart =
+        showLabelEmoji && labelEmoji ? `${labelEmoji} ${label}` : label;
+      return stringWidth(labelPart);
+    })
+  );
+
+  let preview = sorted
+    .map(([label, val]) => {
+      const labelPart =
+        showLabelEmoji && labelEmoji ? `${labelEmoji} ${label}` : label;
+      const paddingNeeded = maxLabelWidth - stringWidth(labelPart);
+      const paddedLabel = labelPart + " ".repeat(paddingNeeded);
+
+      // scale the bar length proportionally
+      const ratio = val / maxValue;
+      const emojiCount = Math.max(1, Math.round(ratio * maxEmojis));
+
+      return `${paddedLabel}  ${valueEmoji.repeat(emojiCount)}`;
+    })
+    .join("\n");
+
+  if (showLegend && valueEmoji) {
+    preview += `\n\nLegend: ${valueEmoji} = ${legendLabel || valueCol}`;
+  }
+  if (showTitle && chartTitle) {
+    preview = `${chartTitle}\n\n${preview}`;
+  }
+  return preview;
+}
+
+// add action handlers for live preview updates in bar_chart_emoji_customize
+const barChartEmojiActions = [
+  "label_emoji",
+  "value_emoji",
+  "show_legend",
+  "show_title_checkbox",
+];
+barChartEmojiActions.forEach((actionId) => {
+  app.action(actionId, async ({ body, ack, client }) => {
+    await ack();
+    const view = body.view;
+    const state = view?.state?.values || {};
+    // Get current selections
+    const labelEmoji =
+      state.label_emoji_block?.label_emoji?.selected_option?.value || "";
+
+    const valueEmoji =
+      state.value_emoji_block?.value_emoji?.selected_option?.value || "";
+
+    const showLegend =
+      state.show_legend_block?.show_legend?.selected_options?.some(
+        (opt) => opt.value === "show"
+      ) || false;
+
+    const showTitle =
+      state.show_title_block?.show_title_checkbox?.selected_options?.some(
+        (opt) => opt.value === "show"
+      ) ?? true;
+
+    const private_metadata = JSON.parse(view.private_metadata || "{}");
+    const rawTableData = private_metadata.rawTableData;
+    const labelCol = private_metadata.labelCol;
+    const valueCol = private_metadata.valueCol;
+    const chartTitle = private_metadata.chartTitle;
+    // Parse data
+    const lines = rawTableData.trim().split("\n");
+    const headers = lines[0].split(",").map((h) => h.trim());
+    const rows = lines
+      .slice(1)
+      .map((line) => line.split(",").map((cell) => cell.trim()));
+    const labelIdx = headers.indexOf(labelCol);
+    const valueIdx = headers.indexOf(valueCol);
+    const agg = {};
+    rows.forEach((row) => {
+      const label = row[labelIdx];
+      const value = Number(row[valueIdx]);
+      agg[label] = (agg[label] || 0) + value;
+    });
+    const legendLabel = valueCol;
+
+    const preview = generateBarChartPreview({
+      agg,
+      labelEmoji: labelEmoji,
+      valueEmoji: valueEmoji,
+      showLabelEmoji: !(labelEmoji === "none"),
+      showLegend: showLegend,
+      valueCol: valueCol,
+      legendLabel: legendLabel,
+      chartTitle,
+      showTitle,
+    });
+
+    // Update the modal
+    const blocks = [...view.blocks];
+    // Find preview block and update its initial_value
+    const previewIdx = blocks.findIndex((b) => b.block_id === "preview_block");
+    if (previewIdx !== -1) {
+      blocks[previewIdx] = {
+        ...blocks[previewIdx],
+        text: {
+          type: "mrkdwn",
+          text: "```\n" + preview + "\n```",
+        },
+      };
+    }
+
+    await client.views.update({
+      view_id: view.id,
+      hash: view.hash,
+      view: {
+        type: view.type,
+        title: view.title,
+        blocks: blocks,
+        callback_id: view.callback_id,
+        private_metadata: view.private_metadata,
+        submit: view.submit,
+        close: view.close,
+      },
+    });
+  });
+});
+
+
 app.view("bar_chart_column_select", async ({ ack, view, body, client }) => {
   const private_metadata = JSON.parse(view.private_metadata || "{}");
   const rawTableData = private_metadata.rawTableData;
@@ -774,473 +721,6 @@ app.view("bar_chart_column_select", async ({ ack, view, body, client }) => {
   });
 });
 
-
-
-app.view("single_value_column_select", async ({ ack, view, client }) => {
-  const private_metadata = JSON.parse(view.private_metadata || "{}");
-  const rawTableData = private_metadata.rawTableData;
-  const chartType = private_metadata.chartType;
-  const chartTitle = private_metadata.chartTitle;
-
-  const labelCol =
-    view.state.values.label_column_block.label_column.selected_option.value;
-  const valueCol =
-    view.state.values.value_column_block.value_column.selected_option.value;
-
-
-  // Get recommended emojis
-  const labelEmojis = recommendEmojis(labelCol);
-  const valueEmojis = recommendEmojis(valueCol);
-
-
-  // Prepare preview (initial, no emoji for label, first value emoji, no legend)
-  // Parse data
-  const lines = rawTableData.trim().split("\n");
-  const headers = lines[0].split(",").map((h) => h.trim());
-  const rows = lines
-    .slice(1)
-    .map((line) => line.split(",").map((cell) => cell.trim()));
-  const labelIdx = headers.indexOf(labelCol);
-  const valueIdx = headers.indexOf(valueCol);
-  const agg = {};
-  rows.forEach((row) => {
-    const label = row[labelIdx];
-    const value = Number(row[valueIdx]);
-    agg[label] = (agg[label] || 0) + value;
-  });
-
-  // default is just the title name
-  let preview = `${chartTitle}`;
-
-  const new_private_metadata = JSON.stringify({
-    ...private_metadata,
-    rawTableData,
-    chartType,
-    labelCol,
-    valueCol,
-    chartTitle,
-  });
-
-  await ack({
-    response_action: "push",
-    view: {
-      type: "modal",
-      callback_id: "single_value_customize",
-      private_metadata: new_private_metadata,
-      title: { type: "plain_text", text: "Single Value Chart Builder", emoji: true },
-      submit: { type: "plain_text", text: "Finish", emoji: true },
-      close: { type: "plain_text", text: "Back", emoji: true },
-      blocks: [
-        {
-          type: "section",
-          block_id: "label_emoji_block",
-          text: {
-            type: "mrkdwn",
-            text: `*Choose emoji for ${labelCol}*`,
-          },
-          accessory: {
-            type: "static_select",
-            action_id: "label_emoji",
-            options: [
-              {
-                text: { type: "plain_text", text: "No label" },
-                value: "none",
-              },
-              ...labelEmojis.map((e) => ({
-                text: { type: "plain_text", text: `${e.emoji}` },
-                value: e.emoji,
-              })),
-            ],
-            initial_option: {
-              text: { type: "plain_text", text: "No label" },
-              value: "none",
-            },
-          },
-        },
-        {
-          type: "section",
-          block_id: "low_emoji_section",
-          text: {
-            type: "mrkdwn",
-            text: "*Low value emoji*"
-          },
-          accessory: {
-            type: "static_select",
-            action_id: "low_emoji",
-            options: valueEmojis.length > 0
-              ? valueEmojis.map((e) => ({
-                  text: { type: "plain_text", text: `${e.emoji}` },
-                  value: e.emoji,
-                }))
-              : [
-                  {
-                    text: { type: "plain_text", text: "👎" },
-                    value: "👎",
-                  },
-                ],
-            initial_option:
-              valueEmojis.length > 0
-                ? {
-                    text: { type: "plain_text", text: `${valueEmojis[0].emoji}` },
-                    value: valueEmojis[0].emoji,
-                  }
-                : {
-                    text: { type: "plain_text", text: "👎" },
-                    value: "👎",
-                  },
-          }
-        },
-
-        {
-          type: "section",
-          block_id: "medium_emoji_section",
-          text: {
-            type: "mrkdwn",
-            text: "*Medium value emoji*"
-          },
-          accessory: {
-            type: "static_select",
-            action_id: "medium_emoji",
-            options: valueEmojis.length > 0
-              ? valueEmojis.map((e) => ({
-                  text: { type: "plain_text", text: `${e.emoji}` },
-                  value: e.emoji,
-                }))
-              : [
-                  {
-                    text: { type: "plain_text", text: "😐" },
-                    value: "😐",
-                  },
-                ],
-            initial_option:
-              valueEmojis.length > 0
-                ? {
-                    text: { type: "plain_text", text: `${valueEmojis[0].emoji}` },
-                    value: valueEmojis[0].emoji,
-                  }
-                : {
-                    text: { type: "plain_text", text: "😐" },
-                    value: "😐",
-                  },
-          }
-        },
-
-        {
-          type: "section",
-          block_id: "high_emoji_section",
-          text: {
-            type: "mrkdwn",
-            text: "*High value emoji*"
-          },
-          accessory: {
-            type: "static_select",
-            action_id: "high_emoji",
-            options: valueEmojis.length > 0
-              ? valueEmojis.map((e) => ({
-                  text: { type: "plain_text", text: `${e.emoji}` },
-                  value: e.emoji,
-                }))
-              : [
-                  {
-                    text: { type: "plain_text", text: "👍" },
-                    value: "👍",
-                  },
-                ],
-            initial_option:
-              valueEmojis.length > 0
-                ? {
-                    text: { type: "plain_text", text: `${valueEmojis[0].emoji}` },
-                    value: valueEmojis[0].emoji,
-                  }
-                : {
-                    text: { type: "plain_text", text: "👍" },
-                    value: "👍",
-                  },
-          }
-        },
-
-        {
-          type: "section",
-          block_id: "low_threshold_section",
-          text: {
-            type: "mrkdwn",
-            text: "*Low threshold*"
-          },
-          accessory: {
-            type: "plain_text_input",
-            action_id: "low_threshold_input",
-            placeholder: {
-              type: "plain_text",
-              text: "e.g. 33"
-            }
-          }
-        },
-        {
-          type: "section",
-          block_id: "high_threshold_section",
-          text: {
-            type: "mrkdwn",
-            text: "*High threshold*"
-          },
-          accessory: {
-            type: "plain_text_input",
-            action_id: "high_threshold_input",
-            placeholder: {
-              type: "plain_text",
-              text: "e.g. 66"
-            }
-          }
-        },
-        {
-          type: "section",
-          block_id: "show_title_block",
-          text: {
-            type: "mrkdwn",
-            text: "*Show chart title?*",
-          },
-          accessory: {
-            type: "checkboxes",
-            action_id: "show_title_checkbox",
-            options: [
-              {
-                text: { type: "plain_text", text: "Show chart title" },
-                value: "show",
-              },
-            ],
-            initial_options: [
-              {
-                text: { type: "plain_text", text: "Show chart title" },
-                value: "show",
-              },
-            ],
-          },
-        },
-        {
-          type: "section",
-          block_id: "show_legend_block",
-          text: {
-            type: "mrkdwn",
-            text: "*Show legend?*",
-          },
-          accessory: {
-            type: "checkboxes",
-            action_id: "show_legend",
-            options: [
-              {
-                text: { type: "plain_text", text: "Show legend" },
-                value: "show",
-              },
-            ],
-          },
-        },
-        {
-          type: "section",
-          block_id: "preview_label_block",
-          text: {
-            type: "mrkdwn",
-            text: "*Preview*",
-          },
-        },
-        {
-          type: "section",
-          block_id: "preview_block",
-          text: {
-            type: "mrkdwn",
-            text: "```\n" + preview + "\n```",
-          },
-        },
-      ],
-    },
-  });
-});
-
-
-
-function generateBarChartPreview({
-  agg,
-  labelEmoji,
-  valueEmoji,
-  showLabelEmoji,
-  showLegend,
-  valueCol,
-  legendLabel,
-  chartTitle,
-  showTitle = true,
-  maxEmojis = 10, // max emojis for the bar length
-}) {
-  const sorted = Object.entries(agg).sort((a, b) => b[1] - a[1]);
-  const maxValue = sorted[0]?.[1] || 1; // find max value to calculate the ratio
-
-  // compute the widest label for alignment
-  const maxLabelWidth = Math.max(
-    ...sorted.map(([label]) => {
-      const labelPart =
-        showLabelEmoji && labelEmoji ? `${labelEmoji} ${label}` : label;
-      return stringWidth(labelPart);
-    })
-  );
-
-  let preview = sorted
-    .map(([label, val]) => {
-      const labelPart =
-        showLabelEmoji && labelEmoji ? `${labelEmoji} ${label}` : label;
-      const paddingNeeded = maxLabelWidth - stringWidth(labelPart);
-      const paddedLabel = labelPart + " ".repeat(paddingNeeded);
-
-      // scale the bar length proportionally
-      const ratio = val / maxValue;
-      const emojiCount = Math.max(1, Math.round(ratio * maxEmojis));
-
-      return `${paddedLabel}  ${valueEmoji.repeat(emojiCount)}`;
-    })
-    .join("\n");
-
-  if (showLegend && valueEmoji) {
-    preview += `\n\nLegend: ${valueEmoji} = ${legendLabel || valueCol}`;
-  }
-  if (showTitle && chartTitle) {
-    preview = `${chartTitle}\n\n${preview}`;
-  }
-  return preview;
-}
-
-function generateSingleValueChartPreview({
-  agg,
-  labelEmoji,
-  lowEmoji = "👎",
-  mediumEmoji = "😐",
-  highEmoji = "👍",
-  lowThreshold,
-  highThreshold,
-  chartTitle,
-  showTitle = true,
-}) {
-  const entries = Object.entries(agg);
-  if (entries.length === 0) return "No data to display.";
-
-  // calculate thresholds if not explicitly given (good if the values are varied)
-  const values = entries.map(([, val]) => val).sort((a, b) => a - b);
-  const autoLow = values[Math.floor(values.length / 3)];
-  const autoHigh = values[Math.floor((2 * values.length) / 3)];
-  const lowT = lowThreshold ?? autoLow;
-  const highT = highThreshold ?? autoHigh;
-
-  const maxLabelWidth = Math.max(
-    ...entries.map(([label]) => {
-      const labelPart = labelEmoji ? `${labelEmoji} ${label}` : label;
-      return stringWidth(labelPart);
-    })
-  );
-
-  const preview = entries
-    .map(([label, val]) => {
-      let emoji = mediumEmoji;
-      if (val <= lowT) emoji = lowEmoji;
-      else if (val >= highT) emoji = highEmoji;
-
-      const labelPart = labelEmoji ? `${labelEmoji} ${label}` : label;
-      const paddingNeeded = maxLabelWidth - stringWidth(labelPart);
-      const paddedLabel = labelPart + " ".repeat(paddingNeeded);
-
-      return `${paddedLabel}  ${emoji}`;
-    })
-    .join("\n");
-
-  return showTitle && chartTitle ? `${chartTitle}\n\n${preview}` : preview;
-}
-
-// Add action handlers for live preview updates in bar_chart_emoji_customize
-const barChartEmojiActions = [
-  "label_emoji",
-  "value_emoji",
-  "show_legend",
-  "show_title_checkbox",
-];
-barChartEmojiActions.forEach((actionId) => {
-  app.action(actionId, async ({ body, ack, client }) => {
-    await ack();
-    const view = body.view;
-    const state = view?.state?.values || {};
-    // Get current selections
-    const labelEmoji =
-      state.label_emoji_block?.label_emoji?.selected_option?.value || "";
-
-    const valueEmoji =
-      state.value_emoji_block?.value_emoji?.selected_option?.value || "";
-
-    const showLegend =
-      state.show_legend_block?.show_legend?.selected_options?.some(
-        (opt) => opt.value === "show"
-      ) || false;
-
-    const showTitle =
-      state.show_title_block?.show_title_checkbox?.selected_options?.some(
-        (opt) => opt.value === "show"
-      ) ?? true;
-
-    const private_metadata = JSON.parse(view.private_metadata || "{}");
-    const rawTableData = private_metadata.rawTableData;
-    const labelCol = private_metadata.labelCol;
-    const valueCol = private_metadata.valueCol;
-    const chartTitle = private_metadata.chartTitle;
-    // Parse data
-    const lines = rawTableData.trim().split("\n");
-    const headers = lines[0].split(",").map((h) => h.trim());
-    const rows = lines
-      .slice(1)
-      .map((line) => line.split(",").map((cell) => cell.trim()));
-    const labelIdx = headers.indexOf(labelCol);
-    const valueIdx = headers.indexOf(valueCol);
-    const agg = {};
-    rows.forEach((row) => {
-      const label = row[labelIdx];
-      const value = Number(row[valueIdx]);
-      agg[label] = (agg[label] || 0) + value;
-    });
-    const legendLabel = valueCol;
-
-    const preview = generateBarChartPreview({
-      agg,
-      labelEmoji: labelEmoji,
-      valueEmoji: valueEmoji,
-      showLabelEmoji: !(labelEmoji === "none"),
-      showLegend: showLegend,
-      valueCol: valueCol,
-      legendLabel: legendLabel,
-      chartTitle,
-      showTitle,
-    });
-
-    // Update the modal
-    const blocks = [...view.blocks];
-    // Find preview block and update its initial_value
-    const previewIdx = blocks.findIndex((b) => b.block_id === "preview_block");
-    if (previewIdx !== -1) {
-      blocks[previewIdx] = {
-        ...blocks[previewIdx],
-        text: {
-          type: "mrkdwn",
-          text: "```\n" + preview + "\n```",
-        },
-      };
-    }
-
-    await client.views.update({
-      view_id: view.id,
-      hash: view.hash,
-      view: {
-        type: view.type,
-        title: view.title,
-        blocks: blocks,
-        callback_id: view.callback_id,
-        private_metadata: view.private_metadata,
-        submit: view.submit,
-        close: view.close,
-      },
-    });
-  });
-});
-
 app.view("bar_chart_emoji_customize", async ({ ack, body, view, client }) => {
   await ack({
     response_action: "clear",
@@ -1310,39 +790,77 @@ app.view("bar_chart_emoji_customize", async ({ ack, body, view, client }) => {
 
 
 
-app.view("single_value_customize", async ({ ack, view, body, client }) => {
-  await ack({ response_action: "clear" });
+/// SINGLE VALUE CHART ///
+function generateSingleValueChartPreview({
+  agg,
+  labelEmoji,
+  lowEmoji = "👎",
+  mediumEmoji = "😐",
+  highEmoji = "👍",
+  lowThreshold,
+  highThreshold,
+  chartTitle,
+  showTitle = true,
+}) {
+  const entries = Object.entries(agg);
+  if (entries.length === 0) return "No data to display.";
 
+  // calculate thresholds if not explicitly given (good if the values are varied)
+  const values = entries.map(([, val]) => val).sort((a, b) => a - b);
+  const autoLow = values[Math.floor(values.length / 3)];
+  const autoHigh = values[Math.floor((2 * values.length) / 3)];
+  const lowT = lowThreshold ?? autoLow;
+  const highT = highThreshold ?? autoHigh;
+
+  const maxLabelWidth = Math.max(
+    ...entries.map(([label]) => {
+      const labelPart = labelEmoji ? `${labelEmoji} ${label}` : label;
+      return stringWidth(labelPart);
+    })
+  );
+
+  const preview = entries
+    .map(([label, val]) => {
+      let emoji = mediumEmoji;
+      if (val <= lowT) emoji = lowEmoji;
+      else if (val >= highT) emoji = highEmoji;
+
+      const labelPart = labelEmoji ? `${labelEmoji} ${label}` : label;
+      const paddingNeeded = maxLabelWidth - stringWidth(labelPart);
+      const paddedLabel = labelPart + " ".repeat(paddingNeeded);
+
+      return `${paddedLabel}  ${emoji}`;
+    })
+    .join("\n");
+
+  return showTitle && chartTitle ? `${chartTitle}\n\n${preview}` : preview;
+}
+
+
+
+app.view("single_value_column_select", async ({ ack, view, body, client }) => {
   const private_metadata = JSON.parse(view.private_metadata || "{}");
-  const user = body.user.id;
-
   const rawTableData = private_metadata.rawTableData;
-  const labelCol = private_metadata.labelCol;
-  const valueCol = private_metadata.valueCol;
+  const chartType = private_metadata.chartType;
   const chartTitle = private_metadata.chartTitle;
 
-  const state = view.state.values;
-  const labelEmoji =
-    state.label_emoji_block.label_emoji.selected_option.value;
-  const lowEmoji = state.low_emoji_block.low_emoji.value;
-  const mediumEmoji = state.medium_emoji_block.medium_emoji.value;
-  const highEmoji = state.high_emoji_block.high_emoji.value;
+  const labelCol =
+    view.state.values.label_column_block.label_column.selected_option.value;
+  const valueCol =
+    view.state.values.value_column_block.value_column.selected_option.value;
 
-  const thresholds = state.threshold_block?.thresholds?.value;
-  const [lowThreshold, highThreshold] = thresholds
-    ? thresholds.split(",").map((v) => Number(v.trim()))
-    : [undefined, undefined];
+  // Get recommended emojis
+  const labelEmojis = recommendEmojis(labelCol);
+  const valueEmojis = recommendEmojis(valueCol);
 
-  const showTitle =
-    state.show_title_block?.show_title_checkbox?.selected_options?.some(
-      (opt) => opt.value === "show"
-    ) ?? true;
-
+  // Prepare preview (initial, no emoji for label, first value emoji, no legend)
+  // Parse data
   const lines = rawTableData.trim().split("\n");
   const headers = lines[0].split(",").map((h) => h.trim());
   const rows = lines
     .slice(1)
     .map((line) => line.split(",").map((cell) => cell.trim()));
+  // Aggregate by label
   const labelIdx = headers.indexOf(labelCol);
   const valueIdx = headers.indexOf(valueCol);
   const agg = {};
@@ -1352,25 +870,161 @@ app.view("single_value_customize", async ({ ack, view, body, client }) => {
     agg[label] = (agg[label] || 0) + value;
   });
 
-  const preview = generateSingleValueChartPreview({
+  const labelEmoji = "none";
+  const valueEmoji = valueEmojis[0]?.emoji || "⬜";
+  const showTitle = true;  // default checked
+  const showLegend = false; // default unchecked
+
+  // default is just the title name
+  const preview = generateBarChartPreview({
     agg,
     labelEmoji,
-    lowEmoji,
-    mediumEmoji,
-    highEmoji,
-    lowThreshold,
-    highThreshold,
+    valueEmoji,
+    showLabelEmoji: labelEmoji !== "none",
+    showLegend,
+    valueCol,
     chartTitle,
     showTitle,
   });
 
-  const channel = private_metadata.channelId || user;
-  const thread_ts = private_metadata.threadTs;
+  const new_private_metadata = JSON.stringify({
+    ...private_metadata,
+    rawTableData,
+    chartType,
+    labelCol,
+    valueCol,
+    chartTitle,
+  });
 
-  await client.chat.postMessage({
-    channel,
-    thread_ts,
-    text: preview,
+  await ack({
+    response_action: "push",
+    view: {
+      type: "modal",
+      callback_id: "bar_chart_emoji_customize",
+      private_metadata: new_private_metadata,
+      title: { type: "plain_text", text: "Bar Chart Builder", emoji: true },
+      submit: { type: "plain_text", text: "Finish", emoji: true },
+      close: { type: "plain_text", text: "Back", emoji: true },
+      blocks: [
+        {
+          type: "section",
+          block_id: "label_emoji_block",
+          text: {
+            type: "mrkdwn",
+            text: `*Choose emoji for ${labelCol}*`,
+          },
+          accessory: {
+            type: "static_select",
+            action_id: "label_emoji",
+            options: [
+              {
+                text: { type: "plain_text", text: "No label" },
+                value: "none",
+              },
+              ...labelEmojis.map((e) => ({
+                text: { type: "plain_text", text: `${e.emoji}` },
+                value: e.emoji,
+              })),
+            ],
+            initial_option: {
+              text: { type: "plain_text", text: "No label" },
+              value: "none",
+            },
+          },
+        },
+        {
+          type: "section",
+          block_id: "value_emoji_block",
+          text: {
+            type: "mrkdwn",
+            text: `*Choose emoji for ${valueCol}*`,
+          },
+          accessory: {
+            type: "static_select",
+            action_id: "value_emoji",
+            options: valueEmojis.length > 0
+              ? valueEmojis.map((e) => ({
+                  text: { type: "plain_text", text: `${e.emoji}` },
+                  value: e.emoji,
+                }))
+              : [
+                  {
+                    text: { type: "plain_text", text: "⬜ (no emoji available)" },
+                    value: "⬜",
+                  },
+                ],
+            initial_option:
+              valueEmojis.length > 0
+                ? {
+                    text: { type: "plain_text", text: `${valueEmojis[0].emoji}` },
+                    value: valueEmojis[0].emoji,
+                  }
+                : {
+                    text: { type: "plain_text", text: "⬜ (no emoji available)" },
+                    value: "⬜",
+                  },
+          },
+        },
+        {
+          type: "section",
+          block_id: "show_title_block",
+          text: {
+            type: "mrkdwn",
+            text: "*Show chart title?*",
+          },
+          accessory: {
+            type: "checkboxes",
+            action_id: "show_title_checkbox",
+            options: [
+              {
+                text: { type: "plain_text", text: "Show chart title" },
+                value: "show",
+              },
+            ],
+            initial_options: [
+              {
+                text: { type: "plain_text", text: "Show chart title" },
+                value: "show",
+              },
+            ],
+          },
+        },
+        {
+          type: "section",
+          block_id: "show_legend_block",
+          text: {
+            type: "mrkdwn",
+            text: "*Show legend?*",
+          },
+          accessory: {
+            type: "checkboxes",
+            action_id: "show_legend",
+            options: [
+              {
+                text: { type: "plain_text", text: "Show legend" },
+                value: "show",
+              },
+            ],
+          },
+        },
+        {
+          type: "section",
+          block_id: "preview_label_block",
+          text: {
+            type: "mrkdwn",
+            text: "*Preview*",
+          },
+        },
+        {
+          type: "section",
+          block_id: "preview_block",
+          text: {
+            type: "mrkdwn",
+            text: "```\n" + preview + "\n```",
+          },
+        },
+      ],
+    },
   });
 });
 
