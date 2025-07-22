@@ -575,7 +575,7 @@ app.view("bar_chart_column_select", async ({ ack, view, body, client }) => {
       type: "modal",
       callback_id: "bar_chart_emoji_customize",
       private_metadata: new_private_metadata,
-      title: { type: "plain_text", text: "Bar Chart Emojis", emoji: true },
+      title: { type: "plain_text", text: "Bar Chart Builder", emoji: true },
       submit: { type: "plain_text", text: "Finish", emoji: true },
       close: { type: "plain_text", text: "Back", emoji: true },
       blocks: [
@@ -589,10 +589,20 @@ app.view("bar_chart_column_select", async ({ ack, view, body, client }) => {
           accessory: {
             type: "static_select",
             action_id: "label_emoji",
-            options: labelEmojis.map((e) => ({
-              text: { type: "plain_text", text: `${e.emoji}` },
-              value: e.emoji,
-            })),
+            options: [
+              {
+                text: { type: "plain_text", text: "No label" },
+                value: "none",
+              },
+              ...labelEmojis.map((e) => ({
+                text: { type: "plain_text", text: `${e.emoji}` },
+                value: e.emoji,
+              })),
+            ],
+            initial_option: {
+              text: { type: "plain_text", text: "No label" },
+              value: "none",
+            },
           },
         },
         {
@@ -605,10 +615,27 @@ app.view("bar_chart_column_select", async ({ ack, view, body, client }) => {
           accessory: {
             type: "static_select",
             action_id: "value_emoji",
-            options: valueEmojis.map((e) => ({
-              text: { type: "plain_text", text: `${e.emoji}` },
-              value: e.emoji,
-            })),
+            options: valueEmojis.length > 0
+              ? valueEmojis.map((e) => ({
+                  text: { type: "plain_text", text: `${e.emoji}` },
+                  value: e.emoji,
+                }))
+              : [
+                  {
+                    text: { type: "plain_text", text: "⬜ (no emoji available)" },
+                    value: "⬜",
+                  },
+                ],
+            initial_option:
+              valueEmojis.length > 0
+                ? {
+                    text: { type: "plain_text", text: `${valueEmojis[0].emoji}` },
+                    value: valueEmojis[0].emoji,
+                  }
+                : {
+                    text: { type: "plain_text", text: "⬜ (no emoji available)" },
+                    value: "⬜",
+                  },
           },
         },
         {
@@ -776,7 +803,7 @@ barChartEmojiActions.forEach((actionId) => {
       agg,
       labelEmoji: labelEmoji,
       valueEmoji: valueEmoji,
-      showLabelEmoji: true,
+      showLabelEmoji: !(labelEmoji === "none"),
       showLegend: showLegend,
       valueCol: valueCol,
       legendLabel: legendLabel,
