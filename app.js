@@ -951,8 +951,6 @@ const singleValueChartEmojiActions = [
   "low_emoji_svc",
   "medium_emoji_svc",
   "high_emoji_svc",
-  "low_threshold_svc",
-  "high_threshold_svc",
   "show_legend_svc",
   "show_title_checkbox_svc",
 ];
@@ -1292,6 +1290,7 @@ app.view("single_value_column_select", async ({ ack, view, body, client }) => {
 function generateTrendChartPreview({
   entries,
   labelEmoji,
+  labelCol,
   lowEmoji = "📉",
   mediumEmoji = "😐",
   highEmoji = "📈",
@@ -1314,24 +1313,14 @@ function generateTrendChartPreview({
   const lowT = min + range / 3;
   const highT = min + (2 * range) / 3;
 
-  const maxLabelWidth = Math.max(
-    ...entries.map(([label]) => {
-      const labelPart = showLabelEmoji && labelEmoji ? `${labelEmoji} ${label}` : label;
-      return stringWidth(labelPart);
-    })
-  );
+  let preview = `${showLabelEmoji ? labelEmoji : ""}${labelCol} `;
 
-  let preview = entries
-    .map(([label, val]) => {
+  preview += entries
+    .map(([_, val]) => {
       let emoji = mediumEmoji;
       if (val <= lowT) emoji = lowEmoji;
       else if (val >= highT) emoji = highEmoji;
-
-      const labelPart = showLabelEmoji && labelEmoji ? `${labelEmoji} ${label}` : label;
-      const paddingNeeded = maxLabelWidth - stringWidth(labelPart);
-      const paddedLabel = labelPart + " ".repeat(paddingNeeded);
-
-      return `${paddedLabel}  ${emoji}`;
+      return `${emoji}`;
     })
     .join("");
 
@@ -1346,6 +1335,113 @@ function generateTrendChartPreview({
   return preview;
 }
 
+const trendChartEmojiActions = [
+  "label_emoji_tc",
+  "low_emoji_tc",
+  "medium_emoji_tc",
+  "high_emoji_tc",
+  "show_legend_tc",
+  "show_title_checkbox_tc",
+];
+trendChartEmojiActions.forEach((actionId) => {
+  app.action(actionId, async ({ body, ack, client }) => {
+    await ack();
+
+    const view = body.view;
+    const state = view?.state?.values || {};
+    const private_metadata = JSON.parse(view.private_metadata || "{}");
+
+    const rawTableData = private_metadata.rawTableData;
+    const labelCol = private_metadata.labelCol;
+    const valueCol = private_metadata.valueCol;
+    const chartTitle = private_metadata.chartTitle;
+    const minRange = private_metadata.minRange;
+    const maxRange = private_metadata.maxRange;
+
+    const labelEmoji =
+      state.label_emoji_block_tc?.label_emoji_tc?.selected_option?.value || "none";
+    const showLabelEmoji = labelEmoji !== "none";
+
+    const lowEmoji =
+      state.low_emoji_block_tc?.low_emoji_tc?.selected_option?.value || "📉";
+    const mediumEmoji =
+      state.medium_emoji_block_tc?.medium_emoji_tc?.selected_option?.value || "😐";
+    const highEmoji =
+      state.high_emoji_block_tc?.high_emoji_tc?.selected_option?.value || "📈";
+
+    const showLegend =
+      state.show_legend_block_tc?.show_legend_tc?.selected_options?.some(
+        (opt) => opt.value === "show"
+      ) || false;
+
+    const showTitle =
+      state.show_title_block_tc?.show_title_checkbox_tc?.selected_options?.some(
+        (opt) => opt.value === "show"
+      ) ?? true;
+
+
+    const lines = rawTableData.trim().split("\n");
+    const headers = lines[0].split(",").map((h) => h.trim());
+    const rows = lines
+      .slice(1)
+      .map((line) => line.split(",").map((cell) => cell.trim()));
+    const labelIdx = headers.indexOf(labelCol);
+    const valueIdx = headers.indexOf(valueCol);
+
+    const entries = rows
+      .map((row) => [row[labelIdx], Number(row[valueIdx])])
+      .filter(([_, val]) => !isNaN(val))
+      .sort((a, b) => new Date(a[0]).getTime() - new Date(b[0]).getTime());
+
+
+    const preview = generateTrendChartPreview({
+      entries,
+      labelEmoji,
+      labelCol,
+      lowEmoji,
+      mediumEmoji,
+      highEmoji,
+      showLabelEmoji,
+      showLegend,
+      minRange,
+      maxRange,
+      chartTitle,
+      showTitle,
+    });
+
+    const blocks = [...view.blocks];
+    const previewIdx = blocks.findIndex((b) => b.block_id === "preview_block_tc");
+    if (previewIdx !== -1) {
+      blocks[previewIdx] = {
+        ...blocks[previewIdx],
+        text: {
+          type: "mrkdwn",
+          text: "```\n" + preview + "\n```",
+        },
+      };
+    }
+
+    const new_private_metadata = JSON.stringify({
+      ...private_metadata,
+      preview,
+    });
+
+    await client.views.update({
+      view_id: view.id,
+      hash: view.hash,
+      view: {
+        type: view.type,
+        title: view.title,
+        blocks,
+        callback_id: view.callback_id,
+        private_metadata: new_private_metadata,
+        submit: view.submit,
+        close: view.close,
+      },
+    });
+  });
+});
+
 
 app.view("trend_chart_column_select", async ({ ack, view, body, client }) => {
   const private_metadata = JSON.parse(view.private_metadata || "{}");
@@ -1357,7 +1453,20 @@ app.view("trend_chart_column_select", async ({ ack, view, body, client }) => {
   const valueCol =
     view.state.values.value_column_block.value_column.selected_option.value;
 
-  // Optional numeric range inputs
+
+  // labelCol cannot be the same as valueCol
+  if (labelCol === valueCol) {
+    await ack({
+      response_action: "errors",
+      errors: {
+        value_column_block: "Value column must be different from the label column.",
+      },
+    });
+    return;
+  }
+
+
+  // optional numeric range inputs
   const lowStr = view.state.values.value_range_low_block?.value_range_low_input?.value;
   const highStr = view.state.values.value_range_high_block?.value_range_high_input?.value;
 
@@ -1400,6 +1509,7 @@ app.view("trend_chart_column_select", async ({ ack, view, body, client }) => {
   const highEmoji = valueEmojis[2]?.emoji || "📈";
   const showTitle = true;
   const showLegend = false;
+  const showLabelEmoji = false;
 
   const lines = rawTableData.trim().split("\n");
   const headers = lines[0].split(",").map((h) => h.trim());
@@ -1417,10 +1527,11 @@ app.view("trend_chart_column_select", async ({ ack, view, body, client }) => {
   const preview = generateTrendChartPreview({
     entries,
     labelEmoji,
+    labelCol,
     lowEmoji,
     mediumEmoji,
     highEmoji,
-    showLabelEmoji: false,
+    showLabelEmoji,
     showLegend,
     minRange,
     maxRange,
@@ -1430,7 +1541,11 @@ app.view("trend_chart_column_select", async ({ ack, view, body, client }) => {
 
   const new_private_metadata = JSON.stringify({
     ...private_metadata,
-    preview,
+    labelCol,
+    valueCol,
+    minRange,
+    maxRange,
+    preview
   });
 
   await ack({
