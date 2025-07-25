@@ -310,6 +310,40 @@ app.view("emoji_chart_modal", async ({ ack, view, body, client }) => {
               options: quantOptions,
             },
           },
+          {
+            type: "input",
+            optional: true,
+            block_id: "value_range_low_block",
+            label: {
+              type: "plain_text",
+              text: "What is the lower bound of the numeric column?",
+            },
+            element: {
+              type: "plain_text_input",
+              action_id: "value_range_low_input",
+              placeholder: {
+                type: "plain_text",
+                text: "e.g. 0",
+              },
+            },
+          },
+          {
+            type: "input",
+            optional: true,
+            block_id: "value_range_high_block",
+            label: {
+              type: "plain_text",
+              text: "What is the upper bound of the numeric column?",
+            },
+            element: {
+              type: "plain_text_input",
+              action_id: "value_range_high_input",
+              placeholder: {
+                type: "plain_text",
+                text: "e.g. 100",
+              },
+            },
+          },
         ],
       },
     });
@@ -802,26 +836,23 @@ function generateSingleValueChartPreview({
   highEmoji = "👍",
   showLabelEmoji,
   showLegend,
-  lowThreshold,
-  highThreshold,
+  minRange,
+  maxRange,
   chartTitle,
   showTitle = true,
 }) {
   const entries = Object.entries(agg);
   if (entries.length === 0) return "No data to display.";
 
-  // Auto-calculate thresholds
+  // auto-calculate thresholds if user input is not given
   const values = entries.map(([, val]) => val).sort((a, b) => a - b);
-  const min = values[0];
-  const max = values[values.length - 1];
+  const min = minRange !== null ? minRange : values[0];
+  const max = maxRange !== null ? maxRange : values[values.length - 1];
   const range = max - min;
 
-  const autoLow = min + range / 3;
-  const autoHigh = min + (2 * range) / 3;
-
   // add user input lowThreshold and highThreshold if possible
-  const lowT = autoLow;
-  const highT = autoHigh;
+  const lowT = min + range / 3;
+  const highT = min + (2 * range) / 3;
 
   const maxLabelWidth = Math.max(
     ...entries.map(([label]) => {
@@ -974,6 +1005,39 @@ app.view("single_value_column_select", async ({ ack, view, body, client }) => {
   const valueCol =
     view.state.values.value_column_block.value_column.selected_option.value;
 
+  const lowStr = view.state.values.value_range_low_block?.value_range_low_input?.value;
+  const highStr = view.state.values.value_range_high_block?.value_range_high_input?.value;
+
+  let low = null;
+  let high = null;
+  if (lowStr && highStr) {
+    low = parseFloat(lowStr);
+    high = parseFloat(highStr);
+
+    if (isNaN(low) || isNaN(high)) {
+      await ack({
+        response_action: "errors",
+        errors: {
+          value_range_low_block: "Low and High must both be valid numbers.",
+        },
+      });
+      return;
+    }
+
+    if (low >= high) {
+      await ack({
+        response_action: "errors",
+        errors: {
+          value_range_low_block: "Low must be less than High.",
+        },
+      });
+      return;
+    }
+  }
+
+  const minRange = low;
+  const maxRange = high;
+
   const labelEmojis = recommendEmojis(labelCol);
   const valueEmojis = recommendEmojis(valueCol);
 
@@ -1006,6 +1070,8 @@ app.view("single_value_column_select", async ({ ack, view, body, client }) => {
     highEmoji,
     showLabelEmoji: false,
     showLegend,
+    minRange,
+    maxRange,
     chartTitle,
     showTitle,
   });
@@ -1101,34 +1167,6 @@ app.view("single_value_column_select", async ({ ack, view, body, client }) => {
               value: highEmoji,
             },
           },
-        },
-        {
-          type: "input",
-          block_id: "low_threshold_block_svc",
-          label: { type: "plain_text", text: "Low threshold " },
-          element: {
-            type: "plain_text_input",
-            action_id: "low_threshold_svc",
-            placeholder: {
-              type: "plain_text",
-              text: "e.g. 20",
-            },
-          },
-          optional: true,
-        },
-        {
-          type: "input",
-          block_id: "high_threshold_block_svc",
-          label: { type: "plain_text", text: "High threshold" },
-          element: {
-            type: "plain_text_input",
-            action_id: "high_threshold_svc",
-            placeholder: {
-              type: "plain_text",
-              text: "e.g. 80",
-            },
-          },
-          optional: true,
         },
         {
           type: "section",
