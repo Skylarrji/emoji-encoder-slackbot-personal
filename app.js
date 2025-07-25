@@ -560,7 +560,6 @@ barChartEmojiActions.forEach((actionId) => {
 app.view("bar_chart_column_select", async ({ ack, view, body, client }) => {
   const private_metadata = JSON.parse(view.private_metadata || "{}");
   const rawTableData = private_metadata.rawTableData;
-  const chartType = private_metadata.chartType;
   const chartTitle = private_metadata.chartTitle;
 
   const labelCol =
@@ -608,18 +607,14 @@ app.view("bar_chart_column_select", async ({ ack, view, body, client }) => {
 
   const new_private_metadata = JSON.stringify({
     ...private_metadata,
-    rawTableData,
-    chartType,
-    labelCol,
-    valueCol,
-    chartTitle,
+    preview
   });
 
   await ack({
     response_action: "push",
     view: {
       type: "modal",
-      callback_id: "bar_chart_emoji_customize",
+      callback_id: "post_final_message",
       private_metadata: new_private_metadata,
       title: { type: "plain_text", text: "Bar Chart Builder", emoji: true },
       submit: { type: "plain_text", text: "Finish", emoji: true },
@@ -756,74 +751,6 @@ app.view("bar_chart_column_select", async ({ ack, view, body, client }) => {
     },
   });
 });
-
-app.view("bar_chart_emoji_customize", async ({ ack, body, view, client }) => {
-  await ack({
-    response_action: "clear",
-  });
-
-  const user = body.user.id;
-  const state = view?.state?.values || {};
-  const private_metadata = JSON.parse(view.private_metadata || "{}");
-  const rawTableData = private_metadata.rawTableData;
-  const labelCol = private_metadata.labelCol;
-  const valueCol = private_metadata.valueCol;
-  const chartTitle = private_metadata.chartTitle;
-
-  const labelEmoji =
-    state.label_emoji_block?.label_emoji?.selected_option?.value || "";
-  const valueEmoji =
-    state.value_emoji_block?.value_emoji?.selected_option?.value || "";
-  const showLegend =
-    state.show_legend_block?.show_legend?.selected_options?.some(
-      (opt) => opt.value === "show"
-    ) || false;
-  const showTitle =
-    state.show_title_block?.show_title_checkbox?.selected_options?.some(
-      (opt) => opt.value === "show"
-    ) ?? true;
-
-  // Parse data
-  const lines = rawTableData.trim().split("\n");
-  const headers = lines[0].split(",").map((h) => h.trim());
-  const rows = lines
-    .slice(1)
-    .map((line) => line.split(",").map((cell) => cell.trim()));
-  const labelIdx = headers.indexOf(labelCol);
-  const valueIdx = headers.indexOf(valueCol);
-  const agg = {};
-  rows.forEach((row) => {
-    const label = row[labelIdx];
-    const value = Number(row[valueIdx]);
-    agg[label] = (agg[label] || 0) + value;
-  });
-
-  const preview = generateBarChartPreview({
-    agg,
-    labelEmoji,
-    valueEmoji,
-    showLabelEmoji: !(labelEmoji === "none"),
-    showLegend,
-    valueCol,
-    legendLabel: valueCol,
-    chartTitle,
-    showTitle,
-  });
-
-  const channel = private_metadata.channelId || user;
-  const thread_ts = private_metadata.threadTs;
-
-  try {
-    await client.chat.postMessage({
-      channel,
-      text: `\n\`\`\`\n${preview}\`\`\`\n`,
-      ...(thread_ts ? { thread_ts } : {}), // post as thread reply if thread_ts exists
-    });
-  } catch (error) {
-    console.error("Error posting chart message:", error);
-  }
-});
-
 
 
 
@@ -1078,17 +1005,14 @@ app.view("single_value_column_select", async ({ ack, view, body, client }) => {
 
   const new_private_metadata = JSON.stringify({
     ...private_metadata,
-    rawTableData,
-    chartTitle,
-    labelCol,
-    valueCol,
+    preview
   });
 
   await ack({
     response_action: "push",
     view: {
       type: "modal",
-      callback_id: "single_value_emoji_customize",
+      callback_id: "post_final_message",
       private_metadata: new_private_metadata,
       title: { type: "plain_text", text: "Single Value Chart", emoji: true },
       submit: { type: "plain_text", text: "Finish", emoji: true },
@@ -1223,60 +1147,11 @@ app.view("single_value_column_select", async ({ ack, view, body, client }) => {
 });
 
 
-app.view("single_value_emoji_customize", async ({ ack, body, view, client }) => {
+app.view("post_final_message", async ({ ack, body, view, client }) => {
   await ack({ response_action: "clear" });
 
-  const state = view?.state?.values || {};
   const private_metadata = JSON.parse(view.private_metadata || "{}");
-  const { rawTableData, chartTitle, labelCol, valueCol, channelId, threadTs } = private_metadata;
-
-  const labelEmoji =
-    state.label_emoji_block_svc?.label_emoji_svc?.selected_option?.value || "";
-  const lowEmoji =
-    state.low_emoji_block_svc?.low_emoji_svc?.selected_option?.value || "👎";
-  const mediumEmoji =
-    state.medium_emoji_block_svc?.medium_emoji_svc?.selected_option?.value || "😐";
-  const highEmoji =
-    state.high_emoji_block_svc?.high_emoji_svc?.selected_option?.value || "👍";
-  const showLegend =
-    state.show_legend_block_svc?.show_legend_svc?.selected_options?.some(
-      (opt) => opt.value === "show"
-    ) || false;
-  const showTitle =
-    state.show_title_block_svc?.show_title_checkbox_svc?.selected_options?.some(
-      (opt) => opt.value === "show"
-    ) ?? true;
-
-  const lowThreshold = Number(state.low_threshold_block_svc?.low_threshold_svc?.value || "");
-  const highThreshold = Number(state.high_threshold_block_svc?.high_threshold_svc?.value || "");
-
-  const lines = rawTableData.trim().split("\n");
-  const headers = lines[0].split(",").map((h) => h.trim());
-  const rows = lines
-    .slice(1)
-    .map((line) => line.split(",").map((cell) => cell.trim()));
-  const labelIdx = headers.indexOf(labelCol);
-  const valueIdx = headers.indexOf(valueCol);
-  const agg = {};
-  rows.forEach((row) => {
-    const label = row[labelIdx];
-    const value = Number(row[valueIdx]);
-    agg[label] = (agg[label] || 0) + value;
-  });
-
-  const preview = generateSingleValueChartPreview({
-    agg,
-    labelEmoji,
-    lowEmoji,
-    mediumEmoji,
-    highEmoji,
-    showLabelEmoji: !(labelEmoji === "none"),
-    showLegend,
-    lowThreshold: isNaN(lowThreshold) ? undefined : lowThreshold,
-    highThreshold: isNaN(highThreshold) ? undefined : highThreshold,
-    chartTitle,
-    showTitle,
-  });
+  const { channelId, threadTs, preview } = private_metadata;
 
   try {
     await client.chat.postMessage({
