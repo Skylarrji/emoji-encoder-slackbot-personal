@@ -2,6 +2,7 @@ import pkg from "@slack/bolt";
 const { App } = pkg;
 import stringWidth from "string-width";
 import moment from "moment";
+import 'dotenv/config';
 
 const app = new App({
   token: process.env.SLACK_BOT_TOKEN,
@@ -735,6 +736,7 @@ function generateBarChartPreview({
   chartTitle,
   showTitle = true,
   maxEmojis = 10, // max emojis for the bar length
+  showEmojiAtEnd = false // if true, the value emoji will only be shown at the end
 }) {
   const sorted = Object.entries(agg).sort((a, b) => b[1] - a[1]);
   const maxValue = sorted[0]?.[1] || 1; // find max value to calculate the ratio
@@ -759,7 +761,15 @@ function generateBarChartPreview({
       const ratio = val / maxValue;
       const emojiCount = Math.max(1, Math.round(ratio * maxEmojis));
 
-      return `${paddedLabel}  ${valueEmoji.repeat(emojiCount)}`;
+      let bar;
+      if (showEmojiAtEnd) {
+        // show white square for placeholder and one emoji at the end
+        bar = "▫️".repeat(emojiCount - 1) + valueEmoji;
+      } else {
+        bar = valueEmoji.repeat(emojiCount);
+      }
+
+      return `${paddedLabel}  ${bar}`;
     })
     .join("\n");
 
@@ -778,6 +788,7 @@ const barChartEmojiActions = [
   "value_emoji",
   "show_legend",
   "show_title_checkbox",
+  "show_end_emoji_checkbox"
 ];
 barChartEmojiActions.forEach((actionId) => {
   app.action(actionId, async ({ body, ack, client }) => {
@@ -800,6 +811,11 @@ barChartEmojiActions.forEach((actionId) => {
       state.show_title_block?.show_title_checkbox?.selected_options?.some(
         (opt) => opt.value === "show"
       ) ?? true;
+
+    const showEmojiAtEnd =
+      state.show_end_emoji_block?.show_end_emoji_checkbox?.selected_options?.some(
+        (opt) => opt.value === "show"
+      ) || false;
 
     const private_metadata = JSON.parse(view.private_metadata || "{}");
     const rawTableData = private_metadata.rawTableData;
@@ -832,6 +848,7 @@ barChartEmojiActions.forEach((actionId) => {
       legendLabel: legendLabel,
       chartTitle,
       showTitle,
+      showEmojiAtEnd
     });
 
     // Update the modal
@@ -869,6 +886,7 @@ barChartEmojiActions.forEach((actionId) => {
   });
 });
 
+
 app.view("bar_chart_column_select", async ({ ack, view, body, client }) => {
   const private_metadata = JSON.parse(view.private_metadata || "{}");
   const rawTableData = private_metadata.rawTableData;
@@ -904,6 +922,7 @@ app.view("bar_chart_column_select", async ({ ack, view, body, client }) => {
   const valueEmoji = valueEmojis[0]?.emoji || "⬜";
   const showTitle = true; // default checked
   const showLegend = false; // default unchecked
+  const showEmojiAtEnd = false; // default show all emojis
 
   // default is just the title name
   const preview = generateBarChartPreview({
@@ -915,6 +934,7 @@ app.view("bar_chart_column_select", async ({ ack, view, body, client }) => {
     valueCol,
     chartTitle,
     showTitle,
+    showEmojiAtEnd
   });
 
   const new_private_metadata = JSON.stringify({
@@ -1001,6 +1021,24 @@ app.view("bar_chart_column_select", async ({ ack, view, body, client }) => {
                     },
                     value: "⬜",
                   },
+          },
+        },
+        {
+          type: "section",
+          block_id: "show_end_emoji_block",
+          text: {
+            type: "mrkdwn",
+            text: "*Show emoji only at the end of each bar?*",
+          },
+          accessory: {
+            type: "checkboxes",
+            action_id: "show_end_emoji_checkbox",
+            options: [
+              {
+                text: { type: "plain_text", text: "Show emoji only at the end" },
+                value: "show",
+              },
+            ],
           },
         },
         {
@@ -1890,13 +1928,14 @@ app.view("trend_chart_column_select", async ({ ack, view, body, client }) => {
   });
 });
 
+
 // PORPORTION CHART //
 function generateProportionChartPreview({
   agg,
   emojiMap,
   chartTitle,
   showTitle = true,
-  showLegend = true,
+  showLegend = true
 }) {
   // Sort by descending frequency
   const sorted = Object.entries(agg).sort((a, b) => b[1] - a[1]);
