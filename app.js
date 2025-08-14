@@ -641,8 +641,6 @@ app.view("emoji_chart_modal", async ({ ack, view, body, client }) => {
       value: "none"
     };
 
-    console.log("quantOptions", quantOptions);
-
     await ack({
       response_action: "push",
       view: {
@@ -765,8 +763,10 @@ function recommendEmojis(columnName) {
 
   if (name.includes("city"))
     return [{ emoji: "🏙️" }, { emoji: "🌆" }, { emoji: "🗼" }];
+
   if (name.includes("revenue"))
     return [{ emoji: "💰" }, { emoji: "💵" }, { emoji: "💲" }];
+
   if (name.includes("population"))
     return [{ emoji: "👥" }, { emoji: "🧑‍🤝‍🧑" }, { emoji: "👨‍👩‍👧‍👦" }];
 
@@ -774,14 +774,25 @@ function recommendEmojis(columnName) {
     return [{ emoji: "🍎" }, { emoji: "🍏" }, { emoji: "🥧" }];
   if (name.includes("banana"))
     return [{ emoji: "🍌" }, { emoji: "🐒" }, { emoji: "🌴" }];
+  if (name.includes("peach"))
+    return [{ emoji: "🍑" }, { emoji: "☀️" }, { emoji: "🌸" }];
+  if (name.includes("pear"))
+    return [{ emoji: "🍐" }, { emoji: "🌿" }, { emoji: "🍯" }];
+  if (name.includes("cherries"))
+    return [{ emoji: "🍒" }, { emoji: "❤️" }, { emoji: "🌸" }];
+  if (name.includes("strawberries"))
+    return [{ emoji: "🍓" }, { emoji: "🍰" }, { emoji: "🍹" }];
+
+
   if (name.includes("customer growth"))
     return [{ emoji: "📈" }, { emoji: "👤" }, { emoji: "🌱" }];
+
   if (name.includes("satisfaction") || name.includes("satisfaction score"))
     return [{ emoji: "😊" }, { emoji: "👍" }, { emoji: "⭐" }];
 
-  // fallback
   return [{ emoji: "🔹" }, { emoji: "🔸" }, { emoji: "🔺" }];
 }
+
 
 /// BAR CHART ///
 function generateBarChartPreview({
@@ -1990,42 +2001,37 @@ app.view("trend_chart_column_select", async ({ ack, view, body, client }) => {
 
 // PROPORTION CHART //
 function generateProportionChartPreview({
-  agg, // aggregated data where each element is in the form of ["labelname": count]
+  agg, // aggregated data where each element is in the form of ["labelname", count]
   emojiMap, // recommended emoji map in the form of { "labelname": emoji }; should only pertain to top 5 labels
   chartTitle,
   numEmojisPerLine = 10,
   showTitle = true,
   showLegend = true,
-  defaultEmoji = "⬜"
+  defaultEmoji = "📦"
 }) {
-  // total number of emoji slots in chart
   const totalSlots = numEmojisPerLine * numEmojisPerLine;
 
-  // sort by descending frequency
   const sorted = Object.entries(agg).sort((a, b) => b[1] - a[1]);
-
-  // take top 5 most frequent elements only
   const topFive = sorted.slice(0, 5);
 
-  // calculate total 
-  const frequencySum = topFive.reduce((sum, [, count]) => sum + count, 0);
+  const hasOther = sorted.length > 5;
+
+  const frequencySum = sorted.reduce((sum, [, count]) => sum + count, 0);
 
   let emojiSlots = [];
 
-  // fill slots for each top category
+  // allocate slots for each top category proportionally
   for (const [label, count] of topFive) {
     const emoji = emojiMap[label.toLowerCase()] || "🔹";
-    const slotCount = Math.round((count / frequencySum) * totalSlots);
+    const slotCount = Math.max(Math.round((count / frequencySum) * totalSlots), 1);
     emojiSlots.push(...Array(slotCount).fill(emoji));
   }
 
-  // if we have leftover slots, fill with default emoji
-  let hasOther = false;
+  // fill remaining space 
   if (emojiSlots.length < totalSlots) {
-    hasOther = true;
     emojiSlots.push(...Array(totalSlots - emojiSlots.length).fill(defaultEmoji));
   } else if (emojiSlots.length > totalSlots) {
-    emojiSlots = emojiSlots.slice(0, totalSlots); // trim overflow
+    emojiSlots = emojiSlots.slice(0, totalSlots);
   }
 
   // split into lines
@@ -2034,9 +2040,9 @@ function generateProportionChartPreview({
     previewLines.push(emojiSlots.slice(i, i + numEmojisPerLine).join(""));
   }
 
-  // assemble preview
   let preview = previewLines.join("\n");
 
+  // build legend
   if (showLegend) {
     let legend = topFive
       .map(([label]) => `${emojiMap[label.toLowerCase()] || defaultEmoji} = ${label}`)
@@ -2049,6 +2055,7 @@ function generateProportionChartPreview({
     preview += `\n\nLegend: ${legend}`;
   }
 
+  // add title
   if (showTitle && chartTitle) {
     preview = `${chartTitle}\n\n${preview}`;
   }
@@ -2059,15 +2066,16 @@ function generateProportionChartPreview({
 app.view(
   "proportion_chart_column_select",
   async ({ ack, view, body, client }) => {
-    console.log("hi")
     const private_metadata = JSON.parse(view.private_metadata || "{}");
     const rawTableData = private_metadata.rawTableData;
     const chartTitle = private_metadata.chartTitle;
 
-    const labelCol =
-      view.state.values.label_column_block.label_column.selected_option.value;
+    const labelCol = view.state.values.value_column_block.value_column.selected_option.value;
+    const freqCol = view.state.values.numeric_column_block.numeric_column.selected_option.value;
 
-    // Parse data
+    const labelEmojis = recommendEmojis(labelCol);
+
+    // parse CSV data
     const lines = rawTableData.trim().split("\n");
     const headers = lines[0].split(",").map((h) => h.trim());
     const rows = lines
@@ -2076,36 +2084,64 @@ app.view(
 
     const labelIdx = headers.indexOf(labelCol);
 
-    // Count frequency of each label (case-insensitive)
+    // count frequency of each label
     const agg = {};
-    rows.forEach((row) => {
-      const rawLabel = row[labelIdx]?.toLowerCase() || "unknown";
-      agg[rawLabel] = (agg[rawLabel] || 0) + 1;
-    });
 
-    // Map emojis to labels
-    const allLabels = Object.keys(agg);
+    if (freqCol !== "none") { // use frequency specified by the frequency column if selected
+      const freqIdx = headers.indexOf(freqCol);
+
+      rows.forEach((row) => {
+        const rawLabel = row[labelIdx]?.trim() || "unknown";
+        const key = rawLabel.toLowerCase();
+
+        const rawFreq = row[freqIdx]?.trim();
+        const freqVal = Number(rawFreq);
+
+        if (!isNaN(freqVal)) {
+          agg[key] = (agg[key] || 0) + freqVal;
+        }
+      });
+
+    } else { // else, use the count of each unique label
+      rows.forEach((row) => {
+        const rawLabel = row[labelIdx]?.trim() || "unknown";
+        const key = rawLabel.toLowerCase();
+        agg[key] = (agg[key] || 0) + 1;
+      });
+    }
+
+
+    // take top 5 labels only for emoji mapping
+    const sortedLabels = Object.entries(agg).sort((a, b) => b[1] - a[1]);
+    const topFive = sortedLabels.slice(0, 5).map(([label]) => label);
+
+    // create emoji map only for top 5
     const emojiMap = {};
-    allLabels.forEach((label) => {
+    topFive.forEach((label) => {
       const suggestions = recommendEmojis(label);
       emojiMap[label] = suggestions[0]?.emoji || "❓";
     });
 
+    // default settings
     const showTitle = true;
     const showLegend = true;
+    const numEmojisPerLine = Number(view.state.values.num_emojis_per_line_block?.num_emojis_per_line_input?.value) || 10;
 
-    const preview = generateProportionChartPreview({
+    // generate preview
+    const formattedPreview = generateProportionChartPreview({
       agg,
       emojiMap,
       chartTitle,
       showTitle,
       showLegend,
+      numEmojisPerLine
     });
 
     const new_private_metadata = JSON.stringify({
       ...private_metadata,
       labelCol,
-      preview,
+      preview: formattedPreview,
+      emojiMap
     });
 
     await ack({
@@ -2126,27 +2162,27 @@ app.view(
               text: `*Choose emoji for each unique value in the label column (${labelCol})*`,
             },
           },
-          emojiMap.forEach((label) => ({
+          // Create one block per top label
+          ...topFive.map((label, i) => ({
             type: "section",
-            block_id: `label_emoji_block_${label}`,
+            block_id: `label_emoji_block_${i}`,
             text: {
               type: "mrkdwn",
-              text: `*${label}*`,
+              text: `${label}`,
             },
             accessory: {
               type: "static_select",
               action_id: `label_emoji_${label}`,
-              options: labelEmojis.map((e) => ({
+              options: recommendEmojis(label).map((e) => ({
                 text: { type: "plain_text", text: e.emoji },
                 value: e.emoji,
               })),
               initial_option: {
-                text: { type: "plain_text", text: "No label" },
-                value: "none",
+                text: { type: "plain_text", text: emojiMap[label] },
+                value: emojiMap[label],
               },
             },
           })),
-
           {
             type: "section",
             block_id: "show_title_block_por",
@@ -2163,15 +2199,11 @@ app.view(
                   value: "show",
                 },
               ],
-              initial_options: [
-                {
-                  text: { type: "plain_text", text: "Show chart title" },
-                  value: "show",
-                },
-              ],
+              initial_options: showTitle
+                ? [{ text: { type: "plain_text", text: "Show chart title" }, value: "show" }]
+                : [],
             },
           },
-
           {
             type: "section",
             block_id: "show_legend_block_por",
@@ -2188,9 +2220,11 @@ app.view(
                   value: "show",
                 },
               ],
+              initial_options: showLegend
+                ? [{ text: { type: "plain_text", text: "Show legend" }, value: "show" }]
+                : [],
             },
           },
-
           {
             type: "section",
             block_id: "preview_label_block_por",
