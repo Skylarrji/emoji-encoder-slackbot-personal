@@ -232,7 +232,7 @@ const knownDateFormats = [
   "YYYY",
 ];
 
-// detects the temporal type of a single value
+// detects the temporal type of a single value (supports date variations)
 const getTemporalType = (value) => {
   if (typeof value !== "string" && typeof value !== "number") return null;
   const str = String(value).trim().toLowerCase();
@@ -345,7 +345,7 @@ app.view("emoji_chart_modal", async ({ ack, view, body, client }) => {
       response_action: "errors",
       errors: {
         table_data_block:
-          "Your data must have at least one temporal column one numeric columns.",
+          "Your data must have at least one temporal column and one numeric column.",
       },
     });
     return;
@@ -763,8 +763,8 @@ function generateBarChartPreview({
 
       let bar;
       if (showEmojiAtEnd) {
-        // show white square for placeholder and one emoji at the end
-        bar = "▫️".repeat(emojiCount - 1) + valueEmoji;
+        // show the braille space character for placeholder and one emoji at the end
+        bar = "⠀⠀".repeat(emojiCount - 1) + valueEmoji;
       } else {
         bar = valueEmoji.repeat(emojiCount);
       }
