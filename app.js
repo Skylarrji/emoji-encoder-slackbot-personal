@@ -2063,6 +2063,134 @@ function generateProportionChartPreview({
   return preview;
 }
 
+
+const proportionChartEmojiActions = [
+  "show_legend_por",
+  "show_title_checkbox_por",
+  "por_label_emoji_0",
+  "por_label_emoji_1",
+  "por_label_emoji_2",
+  "por_label_emoji_3",
+  "por_label_emoji_4",
+];
+proportionChartEmojiActions.forEach((actionId) => {
+  app.action(actionId, async ({ body, ack, client }) => {
+    await ack();
+    const view = body.view;
+    const state = view?.state?.values || {};
+    const private_metadata = JSON.parse(view.private_metadata || "{}");
+
+    const rawTableData = private_metadata.rawTableData;
+    const labelCol = private_metadata.labelCol;
+    const chartTitle = private_metadata.chartTitle || "";
+    const emojiMap = { ...private_metadata.emojiMap };
+    const freqCol = private_metadata.freqCol || "none";
+
+    // Update emojiMap based on the current state
+    Object.keys(state).forEach((blockId) => {
+      const block = state[blockId];
+      Object.keys(block).forEach((actionId) => {
+        if (/^por_label_emoji_\d$/.test(actionId)) {
+          // Grab the label text from the block (same index)
+          const labelText = view.blocks.find(b => b.block_id === blockId)?.text?.text;
+          const selected = block[actionId]?.selected_option?.value;
+          if (labelText && selected) {
+            emojiMap[labelText.toLowerCase()] = selected;
+          }
+        }
+      });
+    });
+
+    const showLegend =
+      state.show_legend_block_por?.show_legend_por?.selected_options?.some(opt => opt.value === "show") || false;
+
+    const showTitle =
+      state.show_title_block_por?.show_title_checkbox_por?.selected_options?.some(opt => opt.value === "show") ?? true;
+
+
+    // parse CSV data
+    const lines = rawTableData.trim().split("\n");
+    const headers = lines[0].split(",").map((h) => h.trim());
+    const rows = lines
+      .slice(1)
+      .map((line) => line.split(",").map((cell) => cell.trim()));
+
+    const labelIdx = headers.indexOf(labelCol);
+
+    // count frequency of each label
+    const agg = {};
+
+    if (freqCol !== "none") { // use frequency specified by the frequency column if selected
+      const freqIdx = headers.indexOf(freqCol);
+
+      rows.forEach((row) => {
+        const rawLabel = row[labelIdx]?.trim() || "unknown";
+        const key = rawLabel.toLowerCase();
+
+        const rawFreq = row[freqIdx]?.trim();
+        const freqVal = Number(rawFreq);
+
+        if (!isNaN(freqVal)) {
+          agg[key] = (agg[key] || 0) + freqVal;
+        }
+      });
+
+    } else { // else, use the count of each unique label
+      rows.forEach((row) => {
+        const rawLabel = row[labelIdx]?.trim() || "unknown";
+        const key = rawLabel.toLowerCase();
+        agg[key] = (agg[key] || 0) + 1;
+      });
+    }
+
+    // Generate preview
+    const formattedPreview = generateProportionChartPreview({
+      agg,
+      emojiMap,
+      chartTitle,
+      showTitle,
+      showLegend,
+      numEmojisPerLine:
+        Number(state.num_emojis_per_line_block?.num_emojis_per_line_input?.value) || 10,
+    });
+
+    // Update preview block
+    const blocks = [...view.blocks];
+    const previewIdx = blocks.findIndex((b) => b.block_id === "preview_block_por");
+    if (previewIdx !== -1) {
+      blocks[previewIdx] = {
+        ...blocks[previewIdx],
+        text: {
+          type: "mrkdwn",
+          text: "```\n" + formattedPreview + "\n```",
+        },
+      };
+    }
+
+    // Update metadata & view
+    const new_private_metadata = JSON.stringify({
+      ...private_metadata,
+      emojiMap,
+      preview: formattedPreview,
+    });
+
+    await client.views.update({
+      view_id: view.id,
+      hash: view.hash,
+      view: {
+        type: view.type,
+        title: view.title,
+        blocks,
+        callback_id: view.callback_id,
+        private_metadata: new_private_metadata,
+        submit: view.submit,
+        close: view.close,
+      },
+    });
+  });
+});
+
+
 app.view(
   "proportion_chart_column_select",
   async ({ ack, view, body, client }) => {
@@ -2072,8 +2200,6 @@ app.view(
 
     const labelCol = view.state.values.value_column_block.value_column.selected_option.value;
     const freqCol = view.state.values.numeric_column_block.numeric_column.selected_option.value;
-
-    const labelEmojis = recommendEmojis(labelCol);
 
     // parse CSV data
     const lines = rawTableData.trim().split("\n");
@@ -2141,14 +2267,15 @@ app.view(
       ...private_metadata,
       labelCol,
       preview: formattedPreview,
-      emojiMap
+      emojiMap,
+      freqCol
     });
 
     await ack({
       response_action: "push",
       view: {
         type: "modal",
-        callback_id: "post_final_message_por",
+        callback_id: "post_final_message",
         private_metadata: new_private_metadata,
         title: { type: "plain_text", text: "Emoji Chart Builder", emoji: true },
         submit: { type: "plain_text", text: "Finish", emoji: true },
@@ -2172,7 +2299,7 @@ app.view(
             },
             accessory: {
               type: "static_select",
-              action_id: `label_emoji_${label}`,
+              action_id: `por_label_emoji_${i}`,
               options: recommendEmojis(label).map((e) => ({
                 text: { type: "plain_text", text: e.emoji },
                 value: e.emoji,
@@ -2261,7 +2388,7 @@ app.view("post_final_message", async ({ ack, body, view, client }) => {
       ...(threadTs ? { thread_ts: threadTs } : {}),
     });
   } catch (error) {
-    console.error("Error posting single value chart:", error);
+    console.error("Error posting final chart:", error);
   }
 });
 
