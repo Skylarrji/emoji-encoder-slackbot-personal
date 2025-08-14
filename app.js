@@ -624,16 +624,30 @@ app.view("emoji_chart_modal", async ({ ack, view, body, client }) => {
   }
 
   if (insight === "proportion") {
-    const categorical = getCategoricalColumns(headers, rows);
+    const categorical = getGeneralCategoricalColumns(headers, rows);
+    const quantitative = getQuantitativeColumns(headers, rows);
     const catOptions = categorical.map((col) => ({
       text: { type: "plain_text", text: col },
       value: col,
     }));
+
+    const quantOptions = quantitative.map((col) => ({
+      text: { type: "plain_text", text: col },
+      value: col,
+    }));
+
+    const noneOption = {
+      text: { type: "plain_text", text: "None" },
+      value: "none"
+    };
+
+    console.log("quantOptions", quantOptions);
+
     await ack({
       response_action: "push",
       view: {
         type: "modal",
-        callback_id: "porportion_chart_column_select",
+        callback_id: "proportion_chart_column_select",
         private_metadata: private_metadata,
         title: { type: "plain_text", text: "Chart Setup", emoji: true },
         submit: { type: "plain_text", text: "Next", emoji: true },
@@ -652,6 +666,40 @@ app.view("emoji_chart_modal", async ({ ack, view, body, client }) => {
               options: catOptions,
             },
           },
+          {
+            type: "input",
+            block_id: "numeric_column_block",
+            label: {
+              type: "plain_text",
+              text: "Which column should be used to determine frequency?",
+            },
+            element: {
+              type: "static_select",
+              action_id: "numeric_column",
+              options: quantOptions.length > 0 ? [...quantOptions, noneOption] : [noneOption],
+            },
+          },
+          {
+            type: "input",
+            optional: true,
+            block_id: "num_emojis_per_line_block",
+            label: {
+              type: "plain_text",
+              text: "Number of emojis per line (default = 10)",
+            },
+            element: {
+              type: "plain_text_input",
+              action_id: "num_emojis_per_line_input",
+              placeholder: {
+                type: "plain_text",
+                text: "e.g. 10",
+              },
+            },
+            hint: {
+              type: "plain_text",
+              text: "This also sets the chart height (total emojis = n x n).",
+            },
+          }
         ],
       },
     });
@@ -2011,6 +2059,7 @@ function generateProportionChartPreview({
 app.view(
   "proportion_chart_column_select",
   async ({ ack, view, body, client }) => {
+    console.log("hi")
     const private_metadata = JSON.parse(view.private_metadata || "{}");
     const rawTableData = private_metadata.rawTableData;
     const chartTitle = private_metadata.chartTitle;
