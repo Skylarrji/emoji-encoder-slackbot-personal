@@ -160,7 +160,7 @@ const parseTableData = (rawTableData) => {
 
 const getCategoricalColumns = (headers, rows) => {
   // Categorical: <=5 unique values, not all numeric
-  return headers.filter((col, idx) => {
+  return headers.filter((_, idx) => {
     const values = rows.map((row) => row[idx]);
     const unique = Array.from(new Set(values));
     const allNumeric = unique.every((v) => !isNaN(Number(v)));
@@ -168,9 +168,19 @@ const getCategoricalColumns = (headers, rows) => {
   });
 };
 
+const getGeneralCategoricalColumns = (headers, rows) => {
+  // General categorical: at least 1 unique value, not all numeric
+  return headers.filter((_, idx) => {
+    const values = rows.map((row) => row[idx]);
+    const unique = Array.from(new Set(values));
+    const allNumeric = unique.every((v) => !isNaN(Number(v)));
+    return unique.length >= 1 && !allNumeric;
+  });
+};
+
 const getQuantitativeColumns = (headers, rows) => {
   // Quantitative: all values numeric
-  return headers.filter((col, idx) => {
+  return headers.filter((_, idx) => {
     const values = rows.map((row) => row[idx]);
     return values.every((v) => v !== "" && !isNaN(Number(v)));
   });
@@ -325,6 +335,7 @@ app.view("emoji_chart_modal", async ({ ack, view, body, client }) => {
 
   const { headers, rows } = parseTableData(rawTableData);
   const hasCategorical = getCategoricalColumns(headers, rows).length > 0;
+  const hasGeneralCategorical = getGeneralCategoricalColumns(headers, rows).length > 0;
   const numQuantitative = getQuantitativeColumns(headers, rows).length;
   const hasQuantitative = numQuantitative > 0;
   const hasTemporal = getTemporalColumns(headers, rows).length > 0;
@@ -351,12 +362,12 @@ app.view("emoji_chart_modal", async ({ ack, view, body, client }) => {
     return;
   }
 
-  if (insight === "proportion" && !hasCategorical) {
+  if (insight === "proportion" && !hasGeneralCategorical) {
     await ack({
       response_action: "errors",
       errors: {
         table_data_block:
-          "Your data must have at least one categorical column.",
+          "Your data must have at least one general categorical column.",
       },
     });
     return;
@@ -1929,35 +1940,64 @@ app.view("trend_chart_column_select", async ({ ack, view, body, client }) => {
 });
 
 
-// PORPORTION CHART //
+// PROPORTION CHART //
 function generateProportionChartPreview({
-  agg,
-  emojiMap,
+  agg, // aggregated data where each element is in the form of ["labelname": count]
+  emojiMap, // recommended emoji map in the form of { "labelname": emoji }; should only pertain to top 5 labels
   chartTitle,
+  numEmojisPerLine = 10,
   showTitle = true,
-  showLegend = true
+  showLegend = true,
+  defaultEmoji = "⬜"
 }) {
-  // Sort by descending frequency
+  // total number of emoji slots in chart
+  const totalSlots = numEmojisPerLine * numEmojisPerLine;
+
+  // sort by descending frequency
   const sorted = Object.entries(agg).sort((a, b) => b[1] - a[1]);
 
-  let previewLines = [];
+  // take top 5 most frequent elements only
+  const topFive = sorted.slice(0, 5);
 
-  for (const [label, count] of sorted) {
-    const emoji = emojiMap[label.toLowerCase()] || "❓"; // default fallback emoji
-    const fullEmojiStr = emoji.repeat(count);
+  // calculate total 
+  const frequencySum = topFive.reduce((sum, [, count]) => sum + count, 0);
 
-    // Split the emojis into lines of 10 max
-    for (let i = 0; i < fullEmojiStr.length; i += 10) {
-      previewLines.push(fullEmojiStr.slice(i, i + 10));
-    }
+  let emojiSlots = [];
+
+  // fill slots for each top category
+  for (const [label, count] of topFive) {
+    const emoji = emojiMap[label.toLowerCase()] || "🔹";
+    const slotCount = Math.round((count / frequencySum) * totalSlots);
+    emojiSlots.push(...Array(slotCount).fill(emoji));
   }
 
+  // if we have leftover slots, fill with default emoji
+  let hasOther = false;
+  if (emojiSlots.length < totalSlots) {
+    hasOther = true;
+    emojiSlots.push(...Array(totalSlots - emojiSlots.length).fill(defaultEmoji));
+  } else if (emojiSlots.length > totalSlots) {
+    emojiSlots = emojiSlots.slice(0, totalSlots); // trim overflow
+  }
+
+  // split into lines
+  const previewLines = [];
+  for (let i = 0; i < emojiSlots.length; i += numEmojisPerLine) {
+    previewLines.push(emojiSlots.slice(i, i + numEmojisPerLine).join(""));
+  }
+
+  // assemble preview
   let preview = previewLines.join("\n");
 
   if (showLegend) {
-    const legend = Object.entries(emojiMap)
-      .map(([label, emoji]) => `${emoji} = ${label}`)
+    let legend = topFive
+      .map(([label]) => `${emojiMap[label.toLowerCase()] || defaultEmoji} = ${label}`)
       .join(", ");
+
+    if (hasOther) {
+      legend += `, ${defaultEmoji} = Other`;
+    }
+
     preview += `\n\nLegend: ${legend}`;
   }
 
