@@ -1,4 +1,4 @@
-import pkg from "@slack/bolt";
+import pkg, { ReceiverInconsistentStateError } from "@slack/bolt";
 const { App } = pkg;
 import stringWidth from "string-width";
 import moment from "moment";
@@ -389,8 +389,18 @@ app.view("emoji_chart_modal", async ({ ack, view, body, client }) => {
         ?.value;
   }
 
-  // Store chartType and chartTitle in private_metadata for next view
   const oldMetadata = JSON.parse(view.private_metadata || "{}");
+  const tableData = { headers, rows };
+
+  // recommend emojis asynchronously
+  process.nextTick(async () => {
+    try {
+      await recommendEmojis("", tableData, chartTitle);
+    } catch (err) {
+      console.error("Error generating emoji recommendations:", err);
+    }
+  });
+  
   const private_metadata = JSON.stringify({
     ...oldMetadata,
     rawTableData,
@@ -768,14 +778,14 @@ app.view("emoji_chart_modal", async ({ ack, view, body, client }) => {
   });
 });
 
-// Helper function to call the Python emoji recommendation script
+// helper function to call the Python emoji recommendation script
 async function callEmojiRecommendation(tableData, tableDescription) {
   try {
-    // Create a temporary CSV file with the table data
+    // create a temporary CSV file with the table data
     const tempCsvPath = path.join(__dirname, "temp_table.csv");
     const tempJsonPath = path.join(__dirname, "temp_recommendations.json");
 
-    // Format the CSV data: first row is description (with commas to match column count), second row is headers, then data
+    // format the CSV data: first row is description (with commas to match column count), second row is headers, then data
     const numColumns = tableData.headers.length;
     const descriptionRow = tableDescription + ",".repeat(numColumns - 1);
     const csvContent = [
@@ -786,15 +796,15 @@ async function callEmojiRecommendation(tableData, tableDescription) {
 
     await fs.writeFile(tempCsvPath, csvContent);
 
-    // Call the Python script
-    const pythonScriptPath = path.join(
-      __dirname,
-      "..",
-      "emoji-recommendation",
-      "src",
-      "emoji_data",
-      "generate_emojis.py"
-    );
+    // call the Python script
+    // const pythonScriptPath = path.join(
+    //   __dirname,
+    //   "..",
+    //   "emoji-recommendation",
+    //   "src",
+    //   "emoji_data",
+    //   "generate_emojis.py"
+    // );
     const pythonModulePath = path.join(
       __dirname,
       "..",
@@ -802,7 +812,7 @@ async function callEmojiRecommendation(tableData, tableDescription) {
       "src"
     );
 
-    // Check if virtual environment exists
+    // check if virtual environment exists
     const venvPythonPath = path.join(
       __dirname,
       "..",
@@ -857,11 +867,11 @@ async function callEmojiRecommendation(tableData, tableDescription) {
       pythonProcess.on("close", async (code) => {
         try {
           if (code === 0) {
-            // Read the generated JSON file
+            // read the generated JSON file
             const jsonContent = await fs.readFile(tempJsonPath, "utf8");
             const recommendations = JSON.parse(jsonContent);
 
-            // Clean up temporary files
+            // clean up temporary files
             await fs.unlink(tempCsvPath);
             await fs.unlink(tempJsonPath);
 
@@ -888,7 +898,7 @@ const emojiRecommendationCache = new Map();
 
 // enhanced emoji recommendation function that uses the Python backend
 async function recommendEmojis(
-  columnName,
+  columnName = "",
   tableData = null,
   tableDescription = null
 ) {
