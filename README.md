@@ -1,74 +1,154 @@
-# emoji-encoder-slackbot
-A mockup of the emoji encoder Slackbot!
+# Emoji Encoder Slack Bot
 
+A Slack bot that creates emoji-based data visualizations from CSV data.
 
+## Features
 
-# Getting Started ⚡️ Bolt for JavaScript
+- **Bar Charts**: Create bar charts with emoji bars
+- **Single Value Charts**: Visualize data with low/medium/high emoji scales
+- **Trend Charts**: Show trends over time with emoji indicators
+- **Proportion Charts**: Display proportions with emoji representations
+- **AI-Powered Emoji Recommendations**: Uses Python backend for intelligent emoji suggestions
 
-> Slack app example from 📚 [Getting started with Bolt for JavaScript tutorial][1]
+## Setup
 
-## Overview
+### Prerequisites
 
-This is a Slack app built with the [Bolt for JavaScript framework][2] that showcases
-responding to events and interactive buttons.
+1. **Node.js** (v16 or higher)
+2. **Python 3** (v3.8 or higher)
+3. **Slack App** with appropriate permissions
 
-## Running locally
+### Installation
 
-### 0. Create a new Slack App
+1. **Install Node.js dependencies:**
 
-- Go to https://api.slack.com/apps
-- Click **Create App**
-- Choose a workspace
-- Enter App Manifest using contents of `manifest.json`
-- Click **Create**
+   ```bash
+   npm install
+   ```
 
-Once the app is created click **Install to Workspace**
-Then scroll down in Basic Info and click **Generate Token and Scopes** with both scopes
+2. **Install Python dependencies:**
 
-### 1. Setup environment variables
+   ```bash
+   cd ../emoji-recommendation
+   python3 -m venv .venv
+   source .venv/bin/activate
+   pip install -r requirements.txt
+   ```
 
-```zsh
-# Replace with your bot and app token
-export SLACK_BOT_TOKEN=<your-bot-token> # from the OAuth section
-export SLACK_APP_TOKEN=<your-app-level-token> # from the Basic Info App Token Section
+3. **Set up environment variables:**
+   Create a `.env` file in the root directory:
+
+   ```
+   SLACK_BOT_TOKEN=your_slack_bot_token
+   SLACK_APP_TOKEN=your_slack_app_token
+   ```
+
+4. **Start the bot:**
+   ```bash
+   npm start
+   ```
+
+## Python Integration
+
+The bot now integrates with the Python emoji recommendation system located in `../emoji-recommendation/`. This provides intelligent emoji suggestions based on:
+
+- **Column names**: Context-aware emoji suggestions for data columns
+- **Data values**: Emoji mappings for categorical values
+- **Table context**: Overall table description influences recommendations
+
+### How it works
+
+1. When a user creates a chart, the bot parses their CSV data
+2. The data is formatted for the Python backend (description row with n-1 commas where n is the number of columns)
+3. The data is sent to the Python backend via the `generate_emojis.py` script
+4. The Python system analyzes the data and returns emoji recommendations
+5. The bot uses these recommendations to suggest appropriate emojis for charts
+
+### Python Backend Features
+
+- **Embedding-based matching**: Uses semantic embeddings to find relevant emojis
+- **Context awareness**: Considers table description and column context
+- **Categorical value mapping**: Maps specific data values to appropriate emojis
+- **Scale generation**: Creates emoji scales for numeric data
+
+## Usage
+
+1. **Start the bot** in your Slack workspace
+2. **Use the `/emojichart` command** to create a new chart
+3. **Enter your data** in CSV format
+4. **Choose chart type** (bar, single value, trend, or proportion)
+5. **Select columns** for labels and values
+6. **Customize emojis** using AI-powered suggestions
+7. **Preview and post** your emoji chart
+
+## Example
+
+```
+/emojichart
+
+Chart title: Movie Ratings by Genre
+Data:
+Genre,Rating
+Action,8.5
+Comedy,7.8
+Drama,8.9
 ```
 
-### 2. Setup your local project
+The bot will suggest appropriate emojis like 🎬 for movies, ⭐ for ratings, etc.
 
-```zsh
-# Clone this project onto your machine
-git clone https://github.com/slackapi/bolt-js-getting-started-app.git
+## Troubleshooting
 
-# Change into the project
-cd bolt-js-getting-started-app/
+### Python Backend Issues
 
-# Install the dependencies
-npm install
-```
+If emoji recommendations aren't working:
 
-### 3. Start servers
+1. **Ensure virtual environment is set up:**
 
-```zsh
-npm run start
-```
+   ```bash
+   cd ../emoji-recommendation
+   python3 -m venv .venv
+   source .venv/bin/activate
+   pip install -r requirements.txt
+   ```
 
-### 4. Test
+2. **Check Python installation:**
 
-Go to the installed workspace and type **Hello** in a DM to your new bot. You can also type **Hello** in a channel where the bot is present
+   ```bash
+   python3 --version
+   ```
 
-## Contributing
+3. **Verify dependencies:**
 
-### Issues and questions
+   ```bash
+   cd ../emoji-recommendation
+   pip list
+   ```
 
-Found a bug or have a question about this project? We'd love to hear from you!
+4. **Test the Python script directly:**
+   ```bash
+   cd ../emoji-recommendation
+   source .venv/bin/activate
+   cd src
+   python -m emoji_data.generate_emojis --input_csv ../data/movies.csv --output_json ../results/test.json --top_k 5
+   ```
 
-1. Browse to [slackapi/bolt-js/issues][4]
-1. Create a new issue
-1. Select the `[x] examples` category
+### Fallback Behavior
 
-See you there and thanks for helping to improve Bolt for everyone!
+If the Python backend fails, the bot will fall back to simple keyword-based emoji suggestions.
 
-[1]: https://tools.slack.dev/bolt-js/getting-started
-[2]: https://tools.slack.dev/bolt-js/
-[3]: https://tools.slack.dev/bolt-js/getting-started/#setting-up-events
-[4]: https://github.com/slackapi/bolt-js/issues/new/choose
+## Development
+
+### Adding New Chart Types
+
+1. Create the chart generation function
+2. Add the view handler for column selection
+3. Update the emoji recommendation calls to use the new async function
+
+### Modifying Emoji Recommendations
+
+The Python backend can be customized by modifying the files in `../emoji-recommendation/src/`:
+
+- `embedding/`: Embedding generation and matching
+- `disambiguation/`: Word sense disambiguation
+- `scale/`: Emoji scale generation
+- `emoji_data/`: Main emoji recommendation logic

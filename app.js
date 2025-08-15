@@ -2,7 +2,14 @@ import pkg from "@slack/bolt";
 const { App } = pkg;
 import stringWidth from "string-width";
 import moment from "moment";
-import 'dotenv/config';
+import "dotenv/config";
+import { spawn } from "child_process";
+import { promises as fs } from "fs";
+import path from "path";
+import { fileURLToPath } from "url";
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 const app = new App({
   token: process.env.SLACK_BOT_TOKEN,
@@ -335,7 +342,8 @@ app.view("emoji_chart_modal", async ({ ack, view, body, client }) => {
 
   const { headers, rows } = parseTableData(rawTableData);
   const hasCategorical = getCategoricalColumns(headers, rows).length > 0;
-  const hasGeneralCategorical = getGeneralCategoricalColumns(headers, rows).length > 0;
+  const hasGeneralCategorical =
+    getGeneralCategoricalColumns(headers, rows).length > 0;
   const numQuantitative = getQuantitativeColumns(headers, rows).length;
   const hasQuantitative = numQuantitative > 0;
   const hasTemporal = getTemporalColumns(headers, rows).length > 0;
@@ -638,7 +646,7 @@ app.view("emoji_chart_modal", async ({ ack, view, body, client }) => {
 
     const noneOption = {
       text: { type: "plain_text", text: "None" },
-      value: "none"
+      value: "none",
     };
 
     await ack({
@@ -674,7 +682,10 @@ app.view("emoji_chart_modal", async ({ ack, view, body, client }) => {
             element: {
               type: "static_select",
               action_id: "numeric_column",
-              options: quantOptions.length > 0 ? [...quantOptions, noneOption] : [noneOption],
+              options:
+                quantOptions.length > 0
+                  ? [...quantOptions, noneOption]
+                  : [noneOption],
             },
           },
           {
@@ -697,7 +708,7 @@ app.view("emoji_chart_modal", async ({ ack, view, body, client }) => {
               type: "plain_text",
               text: "This also sets the chart height (total emojis = n x n).",
             },
-          }
+          },
         ],
       },
     });
@@ -757,8 +768,161 @@ app.view("emoji_chart_modal", async ({ ack, view, body, client }) => {
   });
 });
 
-// simple emoji recommendation function (stand in for backend integration)
-function recommendEmojis(columnName) {
+// Helper function to call the Python emoji recommendation script
+async function callEmojiRecommendation(tableData, tableDescription) {
+  try {
+    // Create a temporary CSV file with the table data
+    const tempCsvPath = path.join(__dirname, "temp_table.csv");
+    const tempJsonPath = path.join(__dirname, "temp_recommendations.json");
+
+    // Format the CSV data: first row is description (with commas to match column count), second row is headers, then data
+    const numColumns = tableData.headers.length;
+    const descriptionRow = tableDescription + ",".repeat(numColumns - 1);
+    const csvContent = [
+      descriptionRow,
+      tableData.headers.join(","),
+      ...tableData.rows.map((row) => row.join(",")),
+    ].join("\n");
+
+    await fs.writeFile(tempCsvPath, csvContent);
+
+    // Call the Python script
+    const pythonScriptPath = path.join(
+      __dirname,
+      "..",
+      "emoji-recommendation",
+      "src",
+      "emoji_data",
+      "generate_emojis.py"
+    );
+    const pythonModulePath = path.join(
+      __dirname,
+      "..",
+      "emoji-recommendation",
+      "src"
+    );
+
+    // Check if virtual environment exists
+    const venvPythonPath = path.join(
+      __dirname,
+      "..",
+      "emoji-recommendation",
+      ".venv",
+      "bin",
+      "python"
+    );
+
+    try {
+      await fs.access(venvPythonPath);
+    } catch (error) {
+      throw new Error(
+        `Virtual environment not found at ${venvPythonPath}. Please run:\n` +
+          `cd ../emoji-recommendation\n` +
+          `python3 -m venv .venv\n` +
+          `source .venv/bin/activate\n` +
+          `pip install -r requirements.txt`
+      );
+    }
+
+    return new Promise((resolve, reject) => {
+      const pythonProcess = spawn(
+        venvPythonPath,
+        [
+          "-m",
+          "emoji_data.generate_emojis",
+          "--input_csv",
+          tempCsvPath,
+          "--output_json",
+          tempJsonPath,
+          "--top_k",
+          "5",
+        ],
+        {
+          cwd: pythonModulePath,
+          stdio: ["pipe", "pipe", "pipe"],
+        }
+      );
+
+      let stdout = "";
+      let stderr = "";
+
+      pythonProcess.stdout.on("data", (data) => {
+        stdout += data.toString();
+      });
+
+      pythonProcess.stderr.on("data", (data) => {
+        stderr += data.toString();
+      });
+
+      pythonProcess.on("close", async (code) => {
+        try {
+          if (code === 0) {
+            // Read the generated JSON file
+            const jsonContent = await fs.readFile(tempJsonPath, "utf8");
+            const recommendations = JSON.parse(jsonContent);
+
+            // Clean up temporary files
+            await fs.unlink(tempCsvPath);
+            await fs.unlink(tempJsonPath);
+
+            resolve(recommendations);
+          } else {
+            console.error("Python script failed:", stderr);
+            reject(
+              new Error(`Python script failed with code ${code}: ${stderr}`)
+            );
+          }
+        } catch (error) {
+          reject(error);
+        }
+      });
+    });
+  } catch (error) {
+    console.error("Error calling emoji recommendation:", error);
+    throw error;
+  }
+}
+
+// cache for emoji recommendations to avoid repeated calls
+const emojiRecommendationCache = new Map();
+
+// enhanced emoji recommendation function that uses the Python backend
+async function recommendEmojis(
+  columnName,
+  tableData = null,
+  tableDescription = null
+) {
+  // if we have table data and description, use the Python backend
+  if (tableData && tableDescription) {
+    const cacheKey = `${tableDescription}_${JSON.stringify(tableData)}`;
+
+    if (emojiRecommendationCache.has(cacheKey)) {
+      const cached = emojiRecommendationCache.get(cacheKey);
+      const columnEmojis = cached.column_name_emojis[columnName] || [];
+      return columnEmojis.map((emoji) => ({ emoji }));
+    }
+
+    try {
+      const recommendations = await callEmojiRecommendation(
+        tableData,
+        tableDescription
+      );
+
+      console.log("backend recommendations:", JSON.stringify(recommendations));
+      emojiRecommendationCache.set(cacheKey, recommendations);
+
+      const columnEmojis = recommendations.column_name_emojis[columnName] || [];
+      return columnEmojis.map((emoji) => ({ emoji }));
+    } catch (error) {
+      console.error(
+        "Failed to get emoji recommendations from Python backend:",
+        error
+      );
+      // fall back to the simple function
+    }
+  }
+
+  // fallback to simple emoji recommendation function
   const name = columnName.toLowerCase();
 
   if (name.includes("city"))
@@ -783,7 +947,6 @@ function recommendEmojis(columnName) {
   if (name.includes("strawberries"))
     return [{ emoji: "🍓" }, { emoji: "🍰" }, { emoji: "🍹" }];
 
-
   if (name.includes("customer growth"))
     return [{ emoji: "📈" }, { emoji: "👤" }, { emoji: "🌱" }];
 
@@ -792,7 +955,6 @@ function recommendEmojis(columnName) {
 
   return [{ emoji: "🔹" }, { emoji: "🔸" }, { emoji: "🔺" }];
 }
-
 
 /// BAR CHART ///
 function generateBarChartPreview({
@@ -806,7 +968,7 @@ function generateBarChartPreview({
   chartTitle,
   showTitle = true,
   maxEmojis = 10, // max emojis for the bar length
-  showEmojiAtEnd = false // if true, the value emoji will only be shown at the end
+  showEmojiAtEnd = false, // if true, the value emoji will only be shown at the end
 }) {
   const sorted = Object.entries(agg).sort((a, b) => b[1] - a[1]);
   const maxValue = sorted[0]?.[1] || 1; // find max value to calculate the ratio
@@ -858,7 +1020,7 @@ const barChartEmojiActions = [
   "value_emoji",
   "show_legend",
   "show_title_checkbox",
-  "show_end_emoji_checkbox"
+  "show_end_emoji_checkbox",
 ];
 barChartEmojiActions.forEach((actionId) => {
   app.action(actionId, async ({ body, ack, client }) => {
@@ -918,7 +1080,7 @@ barChartEmojiActions.forEach((actionId) => {
       legendLabel: legendLabel,
       chartTitle,
       showTitle,
-      showEmojiAtEnd
+      showEmojiAtEnd,
     });
 
     // Update the modal
@@ -956,7 +1118,6 @@ barChartEmojiActions.forEach((actionId) => {
   });
 });
 
-
 app.view("bar_chart_column_select", async ({ ack, view, body, client }) => {
   const private_metadata = JSON.parse(view.private_metadata || "{}");
   const rawTableData = private_metadata.rawTableData;
@@ -967,17 +1128,29 @@ app.view("bar_chart_column_select", async ({ ack, view, body, client }) => {
   const valueCol =
     view.state.values.value_column_block.value_column.selected_option.value;
 
-  // Get recommended emojis
-  const labelEmojis = recommendEmojis(labelCol);
-  const valueEmojis = recommendEmojis(valueCol);
-
-  // Prepare preview (initial, no emoji for label, first value emoji, no legend)
-  // Parse data
+  // Parse data for emoji recommendations
   const lines = rawTableData.trim().split("\n");
   const headers = lines[0].split(",").map((h) => h.trim());
   const rows = lines
     .slice(1)
     .map((line) => line.split(",").map((cell) => cell.trim()));
+
+  const tableData = { headers, rows };
+  const tableDescription = chartTitle || "Data visualization";
+
+  // Get recommended emojis
+  const labelEmojis = await recommendEmojis(
+    labelCol,
+    tableData,
+    tableDescription
+  );
+  const valueEmojis = await recommendEmojis(
+    valueCol,
+    tableData,
+    tableDescription
+  );
+
+  // Prepare preview (initial, no emoji for label, first value emoji, no legend)
   // Aggregate by label
   const labelIdx = headers.indexOf(labelCol);
   const valueIdx = headers.indexOf(valueCol);
@@ -1004,7 +1177,7 @@ app.view("bar_chart_column_select", async ({ ack, view, body, client }) => {
     valueCol,
     chartTitle,
     showTitle,
-    showEmojiAtEnd
+    showEmojiAtEnd,
   });
 
   const new_private_metadata = JSON.stringify({
@@ -1105,7 +1278,10 @@ app.view("bar_chart_column_select", async ({ ack, view, body, client }) => {
             action_id: "show_end_emoji_checkbox",
             options: [
               {
-                text: { type: "plain_text", text: "Show emoji only at the end" },
+                text: {
+                  type: "plain_text",
+                  text: "Show emoji only at the end",
+                },
                 value: "show",
               },
             ],
@@ -1400,8 +1576,26 @@ app.view("single_value_column_select", async ({ ack, view, body, client }) => {
   const minRange = low;
   const maxRange = high;
 
-  const labelEmojis = recommendEmojis(labelCol);
-  const valueEmojis = recommendEmojis(valueCol);
+  // Parse data for emoji recommendations
+  const lines = rawTableData.trim().split("\n");
+  const headers = lines[0].split(",").map((h) => h.trim());
+  const rows = lines
+    .slice(1)
+    .map((line) => line.split(",").map((cell) => cell.trim()));
+
+  const tableData = { headers, rows };
+  const tableDescription = chartTitle || "Data visualization";
+
+  const labelEmojis = await recommendEmojis(
+    labelCol,
+    tableData,
+    tableDescription
+  );
+  const valueEmojis = await recommendEmojis(
+    valueCol,
+    tableData,
+    tableDescription
+  );
 
   const labelEmoji = "none";
   const lowEmoji = valueEmojis[0]?.emoji || "👎";
@@ -1411,11 +1605,6 @@ app.view("single_value_column_select", async ({ ack, view, body, client }) => {
   const showLegend = false;
   const showLabelEmoji = false;
 
-  const lines = rawTableData.trim().split("\n");
-  const headers = lines[0].split(",").map((h) => h.trim());
-  const rows = lines
-    .slice(1)
-    .map((line) => line.split(",").map((cell) => cell.trim()));
   const labelIdx = headers.indexOf(labelCol);
   const valueIdx = headers.indexOf(valueCol);
   const agg = {};
@@ -1809,8 +1998,26 @@ app.view("trend_chart_column_select", async ({ ack, view, body, client }) => {
   const minRange = low;
   const maxRange = high;
 
-  const labelEmojis = recommendEmojis(labelCol);
-  const valueEmojis = recommendEmojis(valueCol);
+  // Parse data for emoji recommendations
+  const lines = rawTableData.trim().split("\n");
+  const headers = lines[0].split(",").map((h) => h.trim());
+  const rows = lines
+    .slice(1)
+    .map((line) => line.split(",").map((cell) => cell.trim()));
+
+  const tableData = { headers, rows };
+  const tableDescription = chartTitle || "Data visualization";
+
+  const labelEmojis = await recommendEmojis(
+    labelCol,
+    tableData,
+    tableDescription
+  );
+  const valueEmojis = await recommendEmojis(
+    valueCol,
+    tableData,
+    tableDescription
+  );
 
   const labelEmoji = "none";
   const lowEmoji = valueEmojis[0]?.emoji || "📉";
@@ -1820,11 +2027,6 @@ app.view("trend_chart_column_select", async ({ ack, view, body, client }) => {
   const showLegend = false;
   const showLabelEmoji = false;
 
-  const lines = rawTableData.trim().split("\n");
-  const headers = lines[0].split(",").map((h) => h.trim());
-  const rows = lines
-    .slice(1)
-    .map((line) => line.split(",").map((cell) => cell.trim()));
   const labelIdx = headers.indexOf(labelCol);
   const valueIdx = headers.indexOf(valueCol);
 
@@ -1998,7 +2200,6 @@ app.view("trend_chart_column_select", async ({ ack, view, body, client }) => {
   });
 });
 
-
 // PROPORTION CHART //
 function generateProportionChartPreview({
   agg, // aggregated data where each element is in the form of ["labelname", count]
@@ -2007,7 +2208,7 @@ function generateProportionChartPreview({
   numEmojisPerLine = 10,
   showTitle = true,
   showLegend = true,
-  defaultEmoji = "📦"
+  defaultEmoji = "📦",
 }) {
   const totalSlots = numEmojisPerLine * numEmojisPerLine;
 
@@ -2023,13 +2224,18 @@ function generateProportionChartPreview({
   // allocate slots for each top category proportionally
   for (const [label, count] of topFive) {
     const emoji = emojiMap[label.toLowerCase()] || "🔹";
-    const slotCount = Math.max(Math.round((count / frequencySum) * totalSlots), 1);
+    const slotCount = Math.max(
+      Math.round((count / frequencySum) * totalSlots),
+      1
+    );
     emojiSlots.push(...Array(slotCount).fill(emoji));
   }
 
-  // fill remaining space 
+  // fill remaining space
   if (emojiSlots.length < totalSlots) {
-    emojiSlots.push(...Array(totalSlots - emojiSlots.length).fill(defaultEmoji));
+    emojiSlots.push(
+      ...Array(totalSlots - emojiSlots.length).fill(defaultEmoji)
+    );
   } else if (emojiSlots.length > totalSlots) {
     emojiSlots = emojiSlots.slice(0, totalSlots);
   }
@@ -2045,7 +2251,10 @@ function generateProportionChartPreview({
   // build legend
   if (showLegend) {
     let legend = topFive
-      .map(([label]) => `${emojiMap[label.toLowerCase()] || defaultEmoji} = ${label}`)
+      .map(
+        ([label]) =>
+          `${emojiMap[label.toLowerCase()] || defaultEmoji} = ${label}`
+      )
       .join(", ");
 
     if (hasOther) {
@@ -2062,7 +2271,6 @@ function generateProportionChartPreview({
 
   return preview;
 }
-
 
 const proportionChartEmojiActions = [
   "show_legend_por",
@@ -2092,7 +2300,8 @@ proportionChartEmojiActions.forEach((actionId) => {
       Object.keys(block).forEach((actionId) => {
         if (/^por_label_emoji_\d$/.test(actionId)) {
           // Grab the label text from the block (same index)
-          const labelText = view.blocks.find(b => b.block_id === blockId)?.text?.text;
+          const labelText = view.blocks.find((b) => b.block_id === blockId)
+            ?.text?.text;
           const selected = block[actionId]?.selected_option?.value;
           if (labelText && selected) {
             emojiMap[labelText.toLowerCase()] = selected;
@@ -2102,11 +2311,14 @@ proportionChartEmojiActions.forEach((actionId) => {
     });
 
     const showLegend =
-      state.show_legend_block_por?.show_legend_por?.selected_options?.some(opt => opt.value === "show") || false;
+      state.show_legend_block_por?.show_legend_por?.selected_options?.some(
+        (opt) => opt.value === "show"
+      ) || false;
 
     const showTitle =
-      state.show_title_block_por?.show_title_checkbox_por?.selected_options?.some(opt => opt.value === "show") ?? true;
-
+      state.show_title_block_por?.show_title_checkbox_por?.selected_options?.some(
+        (opt) => opt.value === "show"
+      ) ?? true;
 
     // parse CSV data
     const lines = rawTableData.trim().split("\n");
@@ -2120,7 +2332,8 @@ proportionChartEmojiActions.forEach((actionId) => {
     // count frequency of each label
     const agg = {};
 
-    if (freqCol !== "none") { // use frequency specified by the frequency column if selected
+    if (freqCol !== "none") {
+      // use frequency specified by the frequency column if selected
       const freqIdx = headers.indexOf(freqCol);
 
       rows.forEach((row) => {
@@ -2134,8 +2347,8 @@ proportionChartEmojiActions.forEach((actionId) => {
           agg[key] = (agg[key] || 0) + freqVal;
         }
       });
-
-    } else { // else, use the count of each unique label
+    } else {
+      // else, use the count of each unique label
       rows.forEach((row) => {
         const rawLabel = row[labelIdx]?.trim() || "unknown";
         const key = rawLabel.toLowerCase();
@@ -2151,12 +2364,16 @@ proportionChartEmojiActions.forEach((actionId) => {
       showTitle,
       showLegend,
       numEmojisPerLine:
-        Number(state.num_emojis_per_line_block?.num_emojis_per_line_input?.value) || 10,
+        Number(
+          state.num_emojis_per_line_block?.num_emojis_per_line_input?.value
+        ) || 10,
     });
 
     // Update preview block
     const blocks = [...view.blocks];
-    const previewIdx = blocks.findIndex((b) => b.block_id === "preview_block_por");
+    const previewIdx = blocks.findIndex(
+      (b) => b.block_id === "preview_block_por"
+    );
     if (previewIdx !== -1) {
       blocks[previewIdx] = {
         ...blocks[previewIdx],
@@ -2190,7 +2407,6 @@ proportionChartEmojiActions.forEach((actionId) => {
   });
 });
 
-
 app.view(
   "proportion_chart_column_select",
   async ({ ack, view, body, client }) => {
@@ -2198,8 +2414,11 @@ app.view(
     const rawTableData = private_metadata.rawTableData;
     const chartTitle = private_metadata.chartTitle;
 
-    const labelCol = view.state.values.value_column_block.value_column.selected_option.value;
-    const freqCol = view.state.values.numeric_column_block.numeric_column.selected_option.value;
+    const labelCol =
+      view.state.values.value_column_block.value_column.selected_option.value;
+    const freqCol =
+      view.state.values.numeric_column_block.numeric_column.selected_option
+        .value;
 
     // parse CSV data
     const lines = rawTableData.trim().split("\n");
@@ -2213,7 +2432,8 @@ app.view(
     // count frequency of each label
     const agg = {};
 
-    if (freqCol !== "none") { // use frequency specified by the frequency column if selected
+    if (freqCol !== "none") {
+      // use frequency specified by the frequency column if selected
       const freqIdx = headers.indexOf(freqCol);
 
       rows.forEach((row) => {
@@ -2227,8 +2447,8 @@ app.view(
           agg[key] = (agg[key] || 0) + freqVal;
         }
       });
-
-    } else { // else, use the count of each unique label
+    } else {
+      // else, use the count of each unique label
       rows.forEach((row) => {
         const rawLabel = row[labelIdx]?.trim() || "unknown";
         const key = rawLabel.toLowerCase();
@@ -2236,22 +2456,32 @@ app.view(
       });
     }
 
-
     // take top 5 labels only for emoji mapping
     const sortedLabels = Object.entries(agg).sort((a, b) => b[1] - a[1]);
     const topFive = sortedLabels.slice(0, 5).map(([label]) => label);
 
     // create emoji map only for top 5
     const emojiMap = {};
-    topFive.forEach((label) => {
-      const suggestions = recommendEmojis(label);
+    const tableData = { headers, rows };
+    const tableDescription = chartTitle || "Data visualization";
+
+    for (const label of topFive) {
+      const suggestions = await recommendEmojis(
+        label,
+        tableData,
+        tableDescription
+      );
       emojiMap[label] = suggestions[0]?.emoji || "❓";
-    });
+    }
 
     // default settings
     const showTitle = true;
     const showLegend = true;
-    const numEmojisPerLine = Number(view.state.values.num_emojis_per_line_block?.num_emojis_per_line_input?.value) || 10;
+    const numEmojisPerLine =
+      Number(
+        view.state.values.num_emojis_per_line_block?.num_emojis_per_line_input
+          ?.value
+      ) || 10;
 
     // generate preview
     const formattedPreview = generateProportionChartPreview({
@@ -2260,7 +2490,7 @@ app.view(
       chartTitle,
       showTitle,
       showLegend,
-      numEmojisPerLine
+      numEmojisPerLine,
     });
 
     const new_private_metadata = JSON.stringify({
@@ -2268,7 +2498,7 @@ app.view(
       labelCol,
       preview: formattedPreview,
       emojiMap,
-      freqCol
+      freqCol,
     });
 
     await ack({
@@ -2300,10 +2530,16 @@ app.view(
             accessory: {
               type: "static_select",
               action_id: `por_label_emoji_${i}`,
-              options: recommendEmojis(label).map((e) => ({
-                text: { type: "plain_text", text: e.emoji },
-                value: e.emoji,
-              })),
+              options: [
+                { text: { type: "plain_text", text: "❓" }, value: "❓" },
+                { text: { type: "plain_text", text: "🔹" }, value: "🔹" },
+                { text: { type: "plain_text", text: "🔸" }, value: "🔸" },
+                { text: { type: "plain_text", text: "🔺" }, value: "🔺" },
+                { text: { type: "plain_text", text: "⭐" }, value: "⭐" },
+                { text: { type: "plain_text", text: "💎" }, value: "💎" },
+                { text: { type: "plain_text", text: "🎯" }, value: "🎯" },
+                { text: { type: "plain_text", text: "🌟" }, value: "🌟" },
+              ],
               initial_option: {
                 text: { type: "plain_text", text: emojiMap[label] },
                 value: emojiMap[label],
@@ -2327,7 +2563,12 @@ app.view(
                 },
               ],
               initial_options: showTitle
-                ? [{ text: { type: "plain_text", text: "Show chart title" }, value: "show" }]
+                ? [
+                    {
+                      text: { type: "plain_text", text: "Show chart title" },
+                      value: "show",
+                    },
+                  ]
                 : [],
             },
           },
@@ -2348,7 +2589,12 @@ app.view(
                 },
               ],
               initial_options: showLegend
-                ? [{ text: { type: "plain_text", text: "Show legend" }, value: "show" }]
+                ? [
+                    {
+                      text: { type: "plain_text", text: "Show legend" },
+                      value: "show",
+                    },
+                  ]
                 : [],
             },
           },
