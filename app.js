@@ -2473,7 +2473,7 @@ app.view(
       freqCol,
     });
 
-    // ---- ACK modal with placeholders first ----
+    // ---- load modal with placeholders first ----
     await ack({
       response_action: "push",
       view: {
@@ -2490,7 +2490,7 @@ app.view(
             block_id: "label_emoji_block_loading_por",
             text: {
               type: "mrkdwn",
-              text: `Loading emoji recommendations...`,
+              text: `⏳ Generating emoji recommendations...`,
             },
           },
           {
