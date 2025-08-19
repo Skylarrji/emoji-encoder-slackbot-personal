@@ -393,13 +393,13 @@ app.view("emoji_chart_modal", async ({ ack, view, body, client }) => {
   const tableData = { headers, rows };
 
   // recommend emojis asynchronously
-  process.nextTick(async () => {
-    try {
-      await recommendEmojis("", tableData, chartTitle);
-    } catch (err) {
-      console.error("Error generating emoji recommendations:", err);
-    }
-  });
+  // process.nextTick(async () => {
+  //   try {
+  //     await recommendEmojis("", tableData, chartTitle);
+  //   } catch (err) {
+  //     console.error("Error generating emoji recommendations:", err);
+  //   }
+  // });
   
   const private_metadata = JSON.stringify({
     ...oldMetadata,
@@ -911,6 +911,8 @@ async function recommendEmojis(
       const columnEmojis = cached.column_name_emojis[columnName] || [];
       return columnEmojis.map((emoji) => ({ emoji }));
     }
+
+    console.log("hey")
 
     try {
       const recommendations = await callEmojiRecommendation(
@@ -2427,64 +2429,37 @@ app.view(
     const labelCol =
       view.state.values.value_column_block.value_column.selected_option.value;
     const freqCol =
-      view.state.values.numeric_column_block.numeric_column.selected_option
-        .value;
+      view.state.values.numeric_column_block.numeric_column.selected_option.value;
 
     // parse CSV data
     const lines = rawTableData.trim().split("\n");
     const headers = lines[0].split(",").map((h) => h.trim());
-    const rows = lines
-      .slice(1)
-      .map((line) => line.split(",").map((cell) => cell.trim()));
-
+    const rows = lines.slice(1).map((line) => line.split(",").map((cell) => cell.trim()));
     const labelIdx = headers.indexOf(labelCol);
 
     // count frequency of each label
     const agg = {};
-
     if (freqCol !== "none") {
-      // use frequency specified by the frequency column if selected
       const freqIdx = headers.indexOf(freqCol);
-
       rows.forEach((row) => {
-        const rawLabel = row[labelIdx]?.trim() || "unknown";
-        const key = rawLabel.toLowerCase();
-
-        const rawFreq = row[freqIdx]?.trim();
-        const freqVal = Number(rawFreq);
-
-        if (!isNaN(freqVal)) {
-          agg[key] = (agg[key] || 0) + freqVal;
-        }
+        const key = (row[labelIdx]?.trim() || "unknown").toLowerCase();
+        const freqVal = Number(row[freqIdx]?.trim());
+        if (!isNaN(freqVal)) agg[key] = (agg[key] || 0) + freqVal;
       });
     } else {
-      // else, use the count of each unique label
       rows.forEach((row) => {
-        const rawLabel = row[labelIdx]?.trim() || "unknown";
-        const key = rawLabel.toLowerCase();
+        const key = (row[labelIdx]?.trim() || "unknown").toLowerCase();
         agg[key] = (agg[key] || 0) + 1;
       });
     }
 
-    // take top 5 labels only for emoji mapping
     const sortedLabels = Object.entries(agg).sort((a, b) => b[1] - a[1]);
     const topFive = sortedLabels.slice(0, 5).map(([label]) => label);
 
-    // create emoji map only for top 5
-    const emojiMap = {};
-    const tableData = { headers, rows };
-    const tableDescription = chartTitle || "Data visualization";
+    // placeholder emoji map
+    const placeholderEmojiMap = {};
+    topFive.forEach((label) => (placeholderEmojiMap[label] = "❓"));
 
-    for (const label of topFive) {
-      const suggestions = await recommendEmojis(
-        label,
-        tableData,
-        tableDescription
-      );
-      emojiMap[label] = suggestions[0]?.emoji || "❓";
-    }
-
-    // default settings
     const showTitle = true;
     const showLegend = true;
     const numEmojisPerLine =
@@ -2493,10 +2468,9 @@ app.view(
           ?.value
       ) || 10;
 
-    // generate preview
     const formattedPreview = generateProportionChartPreview({
       agg,
-      emojiMap,
+      emojiMap: placeholderEmojiMap,
       chartTitle,
       showTitle,
       showLegend,
@@ -2507,10 +2481,11 @@ app.view(
       ...private_metadata,
       labelCol,
       preview: formattedPreview,
-      emojiMap,
+      emojiMap: placeholderEmojiMap,
       freqCol,
     });
 
+    // ---- ACK modal with placeholders first ----
     await ack({
       response_action: "push",
       view: {
@@ -2529,104 +2504,114 @@ app.view(
               text: `*Choose emoji for each unique value in the label column (${labelCol})*`,
             },
           },
-          // Create one block per top label
           ...topFive.map((label, i) => ({
             type: "section",
             block_id: `label_emoji_block_${i}`,
-            text: {
-              type: "mrkdwn",
-              text: `${label}`,
-            },
+            text: { type: "mrkdwn", text: label },
             accessory: {
               type: "static_select",
               action_id: `por_label_emoji_${i}`,
-              options: [
-                { text: { type: "plain_text", text: "❓" }, value: "❓" },
-                { text: { type: "plain_text", text: "🔹" }, value: "🔹" },
-                { text: { type: "plain_text", text: "🔸" }, value: "🔸" },
-                { text: { type: "plain_text", text: "🔺" }, value: "🔺" },
-                { text: { type: "plain_text", text: "⭐" }, value: "⭐" },
-                { text: { type: "plain_text", text: "💎" }, value: "💎" },
-                { text: { type: "plain_text", text: "🎯" }, value: "🎯" },
-                { text: { type: "plain_text", text: "🌟" }, value: "🌟" },
-              ],
-              initial_option: {
-                text: { type: "plain_text", text: emojiMap[label] },
-                value: emojiMap[label],
-              },
+              options: [{ text: { type: "plain_text", text: "❓" }, value: "❓" }],
+              initial_option: { text: { type: "plain_text", text: "❓" }, value: "❓" },
             },
           })),
           {
             type: "section",
             block_id: "show_title_block_por",
-            text: {
-              type: "mrkdwn",
-              text: "*Show chart title?*",
-            },
+            text: { type: "mrkdwn", text: "*Show chart title?*" },
             accessory: {
               type: "checkboxes",
               action_id: "show_title_checkbox_por",
-              options: [
-                {
-                  text: { type: "plain_text", text: "Show chart title" },
-                  value: "show",
-                },
-              ],
+              options: [{ text: { type: "plain_text", text: "Show chart title" }, value: "show" }],
               initial_options: showTitle
-                ? [
-                    {
-                      text: { type: "plain_text", text: "Show chart title" },
-                      value: "show",
-                    },
-                  ]
+                ? [{ text: { type: "plain_text", text: "Show chart title" }, value: "show" }]
                 : [],
             },
           },
           {
             type: "section",
             block_id: "show_legend_block_por",
-            text: {
-              type: "mrkdwn",
-              text: "*Show legend?*",
-            },
+            text: { type: "mrkdwn", text: "*Show legend?*" },
             accessory: {
               type: "checkboxes",
               action_id: "show_legend_por",
-              options: [
-                {
-                  text: { type: "plain_text", text: "Show legend" },
-                  value: "show",
-                },
-              ],
+              options: [{ text: { type: "plain_text", text: "Show legend" }, value: "show" }],
               initial_options: showLegend
-                ? [
-                    {
-                      text: { type: "plain_text", text: "Show legend" },
-                      value: "show",
-                    },
-                  ]
+                ? [{ text: { type: "plain_text", text: "Show legend" }, value: "show" }]
                 : [],
             },
           },
-          {
-            type: "section",
-            block_id: "preview_label_block_por",
-            text: {
-              type: "mrkdwn",
-              text: "*Preview*",
-            },
-          },
-          {
-            type: "section",
-            block_id: "preview_block_por",
-            text: {
-              type: "mrkdwn",
-              text: "```\n" + formattedPreview + "\n```",
-            },
-          },
+          { type: "section", block_id: "preview_label_block_por", text: { type: "mrkdwn", text: "*Preview*" } },
+          { type: "section", block_id: "preview_block_por", text: { type: "mrkdwn", text: "```\n" + formattedPreview + "\n```" } },
         ],
       },
     });
+
+    // ---- Asynchronously replace placeholders with real recommendations ----
+    (async () => {
+      const tableData = { headers, rows };
+      const tableDescription = chartTitle || "Data visualization";
+      const realEmojiMap = {};
+      const suggestions = await recommendEmojis("", tableData, tableDescription);
+      for (const label of topFive) {
+        realEmojiMap[label] = "🍋";
+      }
+
+      console.log("suggestions:", JSON.stringify(suggestions));
+      console.log("Real emoji map:", realEmojiMap);
+
+      const updatedPreview = generateProportionChartPreview({
+        agg,
+        emojiMap: realEmojiMap,
+        chartTitle,
+        showTitle,
+        showLegend,
+        numEmojisPerLine,
+      });
+
+      const updatedBlocks = [
+        {
+          type: "section",
+          block_id: "label_emoji_block_por",
+          text: {
+            type: "mrkdwn",
+            text: `*Choose emoji for each unique value in the label column (${labelCol})*`,
+          },
+        },
+        ...topFive.map((label, i) => ({
+          type: "section",
+          block_id: `label_emoji_block_${i}`,
+          text: { type: "mrkdwn", text: label },
+          accessory: {
+            type: "static_select",
+            action_id: `por_label_emoji_${i}`,
+            options: [{ text: { type: "plain_text", text: realEmojiMap[label] }, value: realEmojiMap[label] }],
+            initial_option: { text: { type: "plain_text", text: realEmojiMap[label] }, value: realEmojiMap[label] },
+          },
+        })),
+        { type: "section", block_id: "preview_block_por", text: { type: "mrkdwn", text: "```\n" + updatedPreview + "\n```" } },
+      ];
+
+      await client.views.update({
+        view_id: body.view.id,
+        hash: body.view.hash,
+        view: {
+          type: "modal",
+          callback_id: "post_final_message",
+          title: { type: "plain_text", text: "Emoji Chart Builder", emoji: true },
+          submit: { type: "plain_text", text: "Finish", emoji: true },
+          close: { type: "plain_text", text: "Back", emoji: true },
+          private_metadata: JSON.stringify({
+            ...private_metadata,
+            labelCol,
+            preview: updatedPreview,
+            emojiMap: realEmojiMap,
+            freqCol,
+          }),
+          blocks: updatedBlocks,
+        },
+      });
+    })();
   }
 );
 
