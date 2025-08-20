@@ -655,7 +655,7 @@ app.view("emoji_chart_modal", async ({ ack, view, body, client }) => {
     }));
 
     const noneOption = {
-      text: { type: "plain_text", text: "None" },
+      text: { type: "plain_text", text: "None (Use Emoji Column)" },
       value: "none",
     };
 
@@ -2648,7 +2648,7 @@ app.view(
       freqCol,
     });
 
-    // ---- load modal with placeholders first ----
+    // ---- load modal with placeholders ----
     await ack({
       response_action: "push",
       view: {
@@ -2679,63 +2679,25 @@ app.view(
           ...topFive.map((label, i) => ({
             type: "section",
             block_id: `label_emoji_block_${i}`,
-            text: { type: "mrkdwn", text: label },
-            accessory: {
-              type: "static_select",
-              action_id: `por_label_emoji_${i}`,
-              options: [
-                { text: { type: "plain_text", text: "❓" }, value: "❓" },
-              ],
-              initial_option: {
-                text: { type: "plain_text", text: "❓" },
-                value: "❓",
-              },
+            text: {
+              type: "mrkdwn",
+              text: `${label}: ❓`,
             },
           })),
           {
             type: "section",
             block_id: "show_title_block_por",
-            text: { type: "mrkdwn", text: "*Show chart title?*" },
-            accessory: {
-              type: "checkboxes",
-              action_id: "show_title_checkbox_por",
-              options: [
-                {
-                  text: { type: "plain_text", text: "Show chart title" },
-                  value: "show",
-                },
-              ],
-              initial_options: showTitle
-                ? [
-                    {
-                      text: { type: "plain_text", text: "Show chart title" },
-                      value: "show",
-                    },
-                  ]
-                : [],
+            text: {
+              type: "mrkdwn",
+              text: "*Show chart title?*\n[x] Show chart title",
             },
           },
           {
             type: "section",
             block_id: "show_legend_block_por",
-            text: { type: "mrkdwn", text: "*Show legend?*" },
-            accessory: {
-              type: "checkboxes",
-              action_id: "show_legend_por",
-              options: [
-                {
-                  text: { type: "plain_text", text: "Show legend" },
-                  value: "show",
-                },
-              ],
-              initial_options: showLegend
-                ? [
-                    {
-                      text: { type: "plain_text", text: "Show legend" },
-                      value: "show",
-                    },
-                  ]
-                : [],
+            text: {
+              type: "mrkdwn",
+              text: "*Show legend?*\n[ ] Show legend",
             },
           },
           {
@@ -2754,6 +2716,7 @@ app.view(
         ],
       },
     });
+
 
     // ---- Asynchronously replace placeholders with real recommendations ----
     (async () => {
