@@ -2137,42 +2137,22 @@ app.view("trend_chart_column_select", async ({ ack, view, body, client }) => {
         {
           type: "section",
           block_id: "loading_block_tc",
-          text: {
-            type: "mrkdwn",
-            text: "⏳ Generating emoji recommendations...",
-          },
+          text: { type: "mrkdwn", text: "⏳ Generating emoji recommendations..." },
         },
         {
           type: "section",
           block_id: "label_emoji_block_tc",
-          text: { type: "mrkdwn", text: `*Choose emoji for ${labelCol}*` },
-          accessory: {
-            type: "static_select",
-            action_id: "label_emoji_tc",
-            options: [
-              { text: { type: "plain_text", text: "No label" }, value: "none" },
-              { text: { type: "plain_text", text: "❓" }, value: "❓" },
-            ],
-            initial_option: {
-              text: { type: "plain_text", text: "No label" },
-              value: "none",
-            },
+          text: {
+            type: "mrkdwn",
+            text: `*Choose emoji for ${labelCol}:* No label`,
           },
         },
         {
           type: "section",
           block_id: "low_emoji_block_tc",
-          text: { type: "mrkdwn", text: `*Low value emoji for ${valueCol}*` },
-          accessory: {
-            type: "static_select",
-            action_id: "low_emoji_tc",
-            options: [
-              { text: { type: "plain_text", text: "❓" }, value: "❓" },
-            ],
-            initial_option: {
-              text: { type: "plain_text", text: "❓" },
-              value: "❓",
-            },
+          text: {
+            type: "mrkdwn",
+            text: `*Low value emoji for ${valueCol}:* ❓`,
           },
         },
         {
@@ -2180,70 +2160,31 @@ app.view("trend_chart_column_select", async ({ ack, view, body, client }) => {
           block_id: "medium_emoji_block_tc",
           text: {
             type: "mrkdwn",
-            text: `*Medium value emoji for ${valueCol}*`,
-          },
-          accessory: {
-            type: "static_select",
-            action_id: "medium_emoji_tc",
-            options: [
-              { text: { type: "plain_text", text: "❓" }, value: "❓" },
-            ],
-            initial_option: {
-              text: { type: "plain_text", text: "❓" },
-              value: "❓",
-            },
+            text: `*Medium value emoji for ${valueCol}:* ❓`,
           },
         },
         {
           type: "section",
           block_id: "high_emoji_block_tc",
-          text: { type: "mrkdwn", text: `*High value emoji for ${valueCol}*` },
-          accessory: {
-            type: "static_select",
-            action_id: "high_emoji_tc",
-            options: [
-              { text: { type: "plain_text", text: "❓" }, value: "❓" },
-            ],
-            initial_option: {
-              text: { type: "plain_text", text: "❓" },
-              value: "❓",
-            },
+          text: {
+            type: "mrkdwn",
+            text: `*High value emoji for ${valueCol}:* ❓`,
           },
         },
         {
           type: "section",
           block_id: "show_title_block_tc",
-          text: { type: "mrkdwn", text: "*Show chart title?*" },
-          accessory: {
-            type: "checkboxes",
-            action_id: "show_title_checkbox_tc",
-            options: [
-              {
-                text: { type: "plain_text", text: "Show chart title" },
-                value: "show",
-              },
-            ],
-            initial_options: [
-              {
-                text: { type: "plain_text", text: "Show chart title" },
-                value: "show",
-              },
-            ],
+          text: {
+            type: "mrkdwn",
+            text: "*Show chart title?*\n[x] Show chart title",
           },
         },
         {
           type: "section",
           block_id: "show_legend_block_tc",
-          text: { type: "mrkdwn", text: "*Show legend?*" },
-          accessory: {
-            type: "checkboxes",
-            action_id: "show_legend_tc",
-            options: [
-              {
-                text: { type: "plain_text", text: "Show legend" },
-                value: "show",
-              },
-            ],
+          text: {
+            type: "mrkdwn",
+            text: "*Show legend?*\n[ ] Show legend",
           },
         },
         {
