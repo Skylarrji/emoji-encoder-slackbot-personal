@@ -1124,56 +1124,37 @@ app.view("bar_chart_column_select", async ({ ack, view, body, client }) => {
   const valueCol =
     view.state.values.value_column_block.value_column.selected_option.value;
 
-  // Parse data for emoji recommendations
+  // parse table
   const lines = rawTableData.trim().split("\n");
   const headers = lines[0].split(",").map((h) => h.trim());
   const rows = lines
     .slice(1)
-    .map((line) => line.split(",").map((cell) => cell.trim()));
+    .map((line) => line.split(",").map((c) => c.trim()));
 
-  const tableData = { headers, rows };
-  const tableDescription = chartTitle || "Data visualization";
-
-  // Get recommended emojis
-  const labelEmojis = await recommendEmojis(
-    labelCol,
-    tableData,
-    tableDescription
-  );
-  const valueEmojis = await recommendEmojis(
-    valueCol,
-    tableData,
-    tableDescription
-  );
-
-  // Prepare preview (initial, no emoji for label, first value emoji, no legend)
-  // Aggregate by label
   const labelIdx = headers.indexOf(labelCol);
   const valueIdx = headers.indexOf(valueCol);
   const agg = {};
   rows.forEach((row) => {
     const label = row[labelIdx];
     const value = Number(row[valueIdx]);
-    agg[label] = (agg[label] || 0) + value;
+    if (!isNaN(value)) {
+      agg[label] = (agg[label] || 0) + value;
+    }
   });
 
+  // placeholder values
   const labelEmoji = "none";
-  const valueEmoji = valueEmojis[0]?.emoji || "⬜";
-  const showTitle = true; // default checked
-  const showLegend = false; // default unchecked
-  const showEmojiAtEnd = false; // default show all emojis
-
-  // default is just the title name
+  const valueEmoji = "❓";
   const preview = generateBarChartPreview({
     agg,
     labelEmoji,
     valueEmoji,
-    showLabelEmoji: labelEmoji !== "none",
-    showLegend,
+    showLabelEmoji: false,
+    showLegend: false,
     valueCol,
     chartTitle,
-    showTitle,
-    showEmojiAtEnd,
+    showTitle: true,
+    showEmojiAtEnd: false,
   });
 
   const new_private_metadata = JSON.stringify({
@@ -1183,10 +1164,12 @@ app.view("bar_chart_column_select", async ({ ack, view, body, client }) => {
     preview,
   });
 
+  // ---- initial ack with placeholders ----
   await ack({
     response_action: "push",
     view: {
       type: "modal",
+      external_id: "emoji_chart_modal_bar",
       callback_id: "post_final_message",
       private_metadata: new_private_metadata,
       title: { type: "plain_text", text: "Bar Chart Builder", emoji: true },
@@ -1195,155 +1178,218 @@ app.view("bar_chart_column_select", async ({ ack, view, body, client }) => {
       blocks: [
         {
           type: "section",
-          block_id: "label_emoji_block",
+          block_id: "loading_block_bar",
+          text: { type: "mrkdwn", text: "⏳ Getting emoji recommendations..." },
+        },
+        {
+          type: "section",
+          block_id: "label_emoji_block_bar",
           text: {
             type: "mrkdwn",
-            text: `*Choose emoji for ${labelCol}*`,
-          },
-          accessory: {
-            type: "static_select",
-            action_id: "label_emoji",
-            options: [
-              {
-                text: { type: "plain_text", text: "No label" },
-                value: "none",
-              },
-              ...labelEmojis.map((e) => ({
-                text: { type: "plain_text", text: `${e.emoji}` },
-                value: e.emoji,
-              })),
-            ],
-            initial_option: {
-              text: { type: "plain_text", text: "No label" },
-              value: "none",
-            },
+            text: `*Label emoji for ${labelCol}*: No label`,
           },
         },
         {
           type: "section",
-          block_id: "value_emoji_block",
+          block_id: "value_emoji_block_bar",
+          text: { type: "mrkdwn", text: `*Value emoji for ${valueCol}*: ❓` },
+        },
+        {
+          type: "section",
+          block_id: "show_end_emoji_block_bar",
           text: {
             type: "mrkdwn",
-            text: `*Choose emoji for ${valueCol}*`,
-          },
-          accessory: {
-            type: "static_select",
-            action_id: "value_emoji",
-            options:
-              valueEmojis.length > 0
-                ? valueEmojis.map((e) => ({
-                    text: { type: "plain_text", text: `${e.emoji}` },
-                    value: e.emoji,
-                  }))
-                : [
-                    {
-                      text: {
-                        type: "plain_text",
-                        text: "⬜ (no emoji available)",
-                      },
-                      value: "⬜",
-                    },
-                  ],
-            initial_option:
-              valueEmojis.length > 0
-                ? {
-                    text: {
-                      type: "plain_text",
-                      text: `${valueEmojis[0].emoji}`,
-                    },
-                    value: valueEmojis[0].emoji,
-                  }
-                : {
-                    text: {
-                      type: "plain_text",
-                      text: "⬜ (no emoji available)",
-                    },
-                    value: "⬜",
-                  },
+            text: "*Show emoji only at the end of each bar?*\n[ ] Show emoji only at the end",
           },
         },
         {
           type: "section",
-          block_id: "show_end_emoji_block",
+          block_id: "show_title_block_bar",
           text: {
             type: "mrkdwn",
-            text: "*Show emoji only at the end of each bar?*",
-          },
-          accessory: {
-            type: "checkboxes",
-            action_id: "show_end_emoji_checkbox",
-            options: [
-              {
-                text: {
-                  type: "plain_text",
-                  text: "Show emoji only at the end",
-                },
-                value: "show",
-              },
-            ],
+            text: "*Show chart title?*\n[x] Show chart title",
           },
         },
         {
           type: "section",
-          block_id: "show_title_block",
+          block_id: "show_legend_block_bar",
           text: {
             type: "mrkdwn",
-            text: "*Show chart title?*",
-          },
-          accessory: {
-            type: "checkboxes",
-            action_id: "show_title_checkbox",
-            options: [
-              {
-                text: { type: "plain_text", text: "Show chart title" },
-                value: "show",
-              },
-            ],
-            initial_options: [
-              {
-                text: { type: "plain_text", text: "Show chart title" },
-                value: "show",
-              },
-            ],
+            text: "*Show legend?*\n[ ] Show legend",
           },
         },
         {
           type: "section",
-          block_id: "show_legend_block",
-          text: {
-            type: "mrkdwn",
-            text: "*Show legend?*",
-          },
-          accessory: {
-            type: "checkboxes",
-            action_id: "show_legend",
-            options: [
-              {
-                text: { type: "plain_text", text: "Show legend" },
-                value: "show",
-              },
-            ],
-          },
+          block_id: "preview_label_block_bar",
+          text: { type: "mrkdwn", text: "*Preview*" },
         },
         {
           type: "section",
-          block_id: "preview_label_block",
-          text: {
-            type: "mrkdwn",
-            text: "*Preview*",
-          },
-        },
-        {
-          type: "section",
-          block_id: "preview_block",
-          text: {
-            type: "mrkdwn",
-            text: "```\n" + preview + "\n```",
-          },
+          block_id: "preview_block_bar",
+          text: { type: "mrkdwn", text: "```\n" + preview + "\n```" },
         },
       ],
     },
   });
+
+  // ---- async update with real emoji recs ----
+  (async () => {
+    const tableData = { headers, rows };
+    const tableDescription = chartTitle || "Bar chart";
+
+    const recommendations = await recommendEmojis(tableData, tableDescription);
+    const labelRecs = getRecEmojiOptions(
+      recommendations,
+      labelCol,
+      "column_name"
+    );
+    const valueRecs = getRecEmojiOptions(
+      recommendations,
+      valueCol,
+      "column_name"
+    );
+
+    const labelEmoji = "none";
+    const valueEmoji = valueRecs[0]?.emoji || "❓";
+    const updatedPreview = generateBarChartPreview({
+      agg,
+      labelEmoji,
+      valueEmoji,
+      showLabelEmoji: false,
+      showLegend: false,
+      valueCol,
+      chartTitle,
+      showTitle: true,
+      showEmojiAtEnd: false,
+    });
+
+    await client.views.update({
+      external_id: "emoji_chart_modal_bar",
+      view: {
+        type: "modal",
+        callback_id: "post_final_message",
+        private_metadata: JSON.stringify({
+          ...private_metadata,
+          labelCol,
+          valueCol,
+          preview: updatedPreview,
+        }),
+        title: { type: "plain_text", text: "Bar Chart Builder", emoji: true },
+        submit: { type: "plain_text", text: "Finish", emoji: true },
+        close: { type: "plain_text", text: "Back", emoji: true },
+        blocks: [
+          {
+            type: "section",
+            block_id: "label_emoji_block",
+            text: { type: "mrkdwn", text: `*Choose emoji for ${labelCol}*` },
+            accessory: {
+              type: "static_select",
+              action_id: "label_emoji",
+              options: [
+                {
+                  text: { type: "plain_text", text: "No label" },
+                  value: "none",
+                },
+                ...labelRecs.map((e) => ({
+                  text: { type: "plain_text", text: e.emoji },
+                  value: e.emoji,
+                })),
+              ],
+              initial_option: {
+                text: { type: "plain_text", text: "No label" },
+                value: "none",
+              },
+            },
+          },
+          {
+            type: "section",
+            block_id: "value_emoji_block",
+            text: { type: "mrkdwn", text: `*Choose emoji for ${valueCol}*` },
+            accessory: {
+              type: "static_select",
+              action_id: "value_emoji",
+              options:
+                valueRecs.length > 0
+                  ? valueRecs.map((e) => ({
+                      text: { type: "plain_text", text: e.emoji },
+                      value: e.emoji,
+                    }))
+                  : [{ text: { type: "plain_text", text: "❓" }, value: "❓" }],
+              initial_option:
+                valueRecs.length > 0
+                  ? {
+                      text: { type: "plain_text", text: valueRecs[0].emoji },
+                      value: valueRecs[0].emoji,
+                    }
+                  : { text: { type: "plain_text", text: "❓" }, value: "❓" },
+            },
+          },
+          {
+            type: "section",
+            block_id: "show_end_emoji_block",
+            text: {
+              type: "mrkdwn",
+              text: "*Show emoji only at the end of each bar?*",
+            },
+            accessory: {
+              type: "checkboxes",
+              action_id: "show_end_emoji_checkbox",
+              options: [
+                {
+                  text: {
+                    type: "plain_text",
+                    text: "Show emoji only at the end",
+                  },
+                  value: "show",
+                },
+              ],
+            },
+          },
+          {
+            type: "section",
+            block_id: "show_title_block",
+            text: { type: "mrkdwn", text: "*Show chart title?*" },
+            accessory: {
+              type: "checkboxes",
+              action_id: "show_title_checkbox",
+              options: [
+                {
+                  text: { type: "plain_text", text: "Show chart title" },
+                  value: "show",
+                },
+              ],
+              initial_options: [
+                {
+                  text: { type: "plain_text", text: "Show chart title" },
+                  value: "show",
+                },
+              ],
+            },
+          },
+          {
+            type: "section",
+            block_id: "show_legend_block",
+            text: { type: "mrkdwn", text: "*Show legend?*" },
+            accessory: {
+              type: "checkboxes",
+              action_id: "show_legend",
+              options: [
+                {
+                  text: { type: "plain_text", text: "Show legend" },
+                  value: "show",
+                },
+              ],
+            },
+          },
+          {
+            type: "section",
+            block_id: "preview_block",
+            text: { type: "mrkdwn", text: "```\n" + updatedPreview + "\n```" },
+          },
+        ],
+      },
+    });
+  })();
 });
 
 /// SINGLE VALUE CHART ///
@@ -1654,43 +1700,58 @@ app.view("single_value_column_select", async ({ ack, view, body, client }) => {
         {
           type: "section",
           block_id: "loading_block_svc",
-          text: { type: "mrkdwn", text: "⏳ Generating emoji recommendations..." },
+          text: {
+            type: "mrkdwn",
+            text: "⏳ Generating emoji recommendations...",
+          },
         },
         {
           type: "section",
           block_id: "label_emoji_block_svc",
-          text: { type: "mrkdwn", text: `*Label emoji for ${labelCol}*: No label` },
+          text: {
+            type: "mrkdwn",
+            text: `*Label emoji for ${labelCol}*: No label`,
+          },
         },
         {
           type: "section",
           block_id: "low_emoji_block_svc",
-          text: { type: "mrkdwn", text: `*Low value emoji for ${valueCol}*: ❓` },
+          text: {
+            type: "mrkdwn",
+            text: `*Low value emoji for ${valueCol}*: ❓`,
+          },
         },
         {
           type: "section",
           block_id: "medium_emoji_block_svc",
-          text: { type: "mrkdwn", text: `*Medium value emoji for ${valueCol}*: ❓` },
+          text: {
+            type: "mrkdwn",
+            text: `*Medium value emoji for ${valueCol}*: ❓`,
+          },
         },
         {
           type: "section",
           block_id: "high_emoji_block_svc",
-          text: { type: "mrkdwn", text: `*High value emoji for ${valueCol}*: ❓` },
+          text: {
+            type: "mrkdwn",
+            text: `*High value emoji for ${valueCol}*: ❓`,
+          },
         },
         {
           type: "section",
           block_id: "show_title_block_svc",
           text: {
             type: "mrkdwn",
-            text: "*Show chart title?*\n[x] Show chart title"
-          }
+            text: "*Show chart title?*\n[x] Show chart title",
+          },
         },
         {
           type: "section",
           block_id: "show_legend_block_svc",
           text: {
             type: "mrkdwn",
-            text: "*Show legend?*\n[ ] Show legend"
-          }
+            text: "*Show legend?*\n[ ] Show legend",
+          },
         },
         {
           type: "section",
@@ -1700,9 +1761,12 @@ app.view("single_value_column_select", async ({ ack, view, body, client }) => {
         {
           type: "section",
           block_id: "preview_block_svc",
-          text: { type: "mrkdwn", text: "```\n" + placeholderPreview + "\n```" },
+          text: {
+            type: "mrkdwn",
+            text: "```\n" + placeholderPreview + "\n```",
+          },
         },
-      ]
+      ],
     },
   });
 
@@ -1743,9 +1807,15 @@ app.view("single_value_column_select", async ({ ack, view, body, client }) => {
           action_id: "label_emoji_svc",
           options: [
             { text: { type: "plain_text", text: "No label" }, value: "none" },
-            ...labelRecs.map((e) => ({ text: { type: "plain_text", text: e.emoji }, value: e.emoji })),
+            ...labelRecs.map((e) => ({
+              text: { type: "plain_text", text: e.emoji },
+              value: e.emoji,
+            })),
           ],
-          initial_option: { text: { type: "plain_text", text: "No label" }, value: "none" },
+          initial_option: {
+            text: { type: "plain_text", text: "No label" },
+            value: "none",
+          },
         },
       },
       {
@@ -1759,7 +1829,10 @@ app.view("single_value_column_select", async ({ ack, view, body, client }) => {
             text: { type: "plain_text", text: e.emoji },
             value: e.emoji,
           })),
-          initial_option: { text: { type: "plain_text", text: lowEmoji }, value: lowEmoji },
+          initial_option: {
+            text: { type: "plain_text", text: lowEmoji },
+            value: lowEmoji,
+          },
         },
       },
       {
@@ -1773,7 +1846,10 @@ app.view("single_value_column_select", async ({ ack, view, body, client }) => {
             text: { type: "plain_text", text: e.emoji },
             value: e.emoji,
           })),
-          initial_option: { text: { type: "plain_text", text: mediumEmoji }, value: mediumEmoji },
+          initial_option: {
+            text: { type: "plain_text", text: mediumEmoji },
+            value: mediumEmoji,
+          },
         },
       },
       {
@@ -1787,7 +1863,10 @@ app.view("single_value_column_select", async ({ ack, view, body, client }) => {
             text: { type: "plain_text", text: e.emoji },
             value: e.emoji,
           })),
-          initial_option: { text: { type: "plain_text", text: highEmoji }, value: highEmoji },
+          initial_option: {
+            text: { type: "plain_text", text: highEmoji },
+            value: highEmoji,
+          },
         },
       },
       {
@@ -1797,8 +1876,18 @@ app.view("single_value_column_select", async ({ ack, view, body, client }) => {
         accessory: {
           type: "checkboxes",
           action_id: "show_title_checkbox_svc",
-          options: [{ text: { type: "plain_text", text: "Show chart title" }, value: "show" }],
-          initial_options: [{ text: { type: "plain_text", text: "Show chart title" }, value: "show" }],
+          options: [
+            {
+              text: { type: "plain_text", text: "Show chart title" },
+              value: "show",
+            },
+          ],
+          initial_options: [
+            {
+              text: { type: "plain_text", text: "Show chart title" },
+              value: "show",
+            },
+          ],
         },
       },
       {
@@ -1808,7 +1897,12 @@ app.view("single_value_column_select", async ({ ack, view, body, client }) => {
         accessory: {
           type: "checkboxes",
           action_id: "show_legend_svc",
-          options: [{ text: { type: "plain_text", text: "Show legend" }, value: "show" }],
+          options: [
+            {
+              text: { type: "plain_text", text: "Show legend" },
+              value: "show",
+            },
+          ],
         },
       },
       {
@@ -2137,7 +2231,10 @@ app.view("trend_chart_column_select", async ({ ack, view, body, client }) => {
         {
           type: "section",
           block_id: "loading_block_tc",
-          text: { type: "mrkdwn", text: "⏳ Generating emoji recommendations..." },
+          text: {
+            type: "mrkdwn",
+            text: "⏳ Generating emoji recommendations...",
+          },
         },
         {
           type: "section",
@@ -2716,7 +2813,6 @@ app.view(
         ],
       },
     });
-
 
     // ---- Asynchronously replace placeholders with real recommendations ----
     (async () => {
