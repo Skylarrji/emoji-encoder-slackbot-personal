@@ -67,7 +67,7 @@ A Slack bot that creates emoji-based data visualizations from CSV data.
    ```
 
    You should see the following message in the console (if not, see the Troubleshooting section):
-   ```bash
+   ```
    > bolt-js-getting-started-app@2.0.0 start
    > node app.js
 
@@ -111,7 +111,7 @@ The bot will suggest appropriate emojis like 🎬 for movies, ⭐ for ratings, e
 
 If you are receiving the following message in the console, run the `/emojichart` command again on Slack and re-run the application using `npm run start`:
 
-```bash
+```
 > bolt-js-getting-started-app@2.0.0 start
 > node app.js
 
