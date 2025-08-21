@@ -7,6 +7,7 @@ import { spawn } from "child_process";
 import { promises as fs } from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
+import emojiRegex from "emoji-regex";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -332,7 +333,7 @@ export const compareTemporalLabels = (a, b) => {
   return aMoment.valueOf() - bMoment.valueOf();
 };
 
-const singleEmojiRegex = /^(\p{Emoji})$/u; // used for custom emoji validation
+const singleEmojiRegex = new RegExp(`^(?:${emojiRegex().source})$`); // used for custom emoji validation
 
 app.view("emoji_chart_modal", async ({ ack, view, body, client }) => {
   const rawTableData = view.state.values.table_data_block.table_input.value;
@@ -1396,6 +1397,7 @@ app.view("bar_chart_column_select", async ({ ack, view, body, client }) => {
   })();
 });
 
+
 /// SINGLE VALUE CHART ///
 function generateSingleValueChartPreview({
   agg,
@@ -1467,17 +1469,19 @@ function generateSingleValueChartPreview({
 
 const singleValueChartEmojiActions = [
   "label_emoji_svc",
+  "custom_label_emoji_svc",
   "low_emoji_svc",
+  "custom_low_emoji_svc",
   "medium_emoji_svc",
+  "custom_medium_emoji_svc",
   "high_emoji_svc",
+  "custom_high_emoji_svc",
   "show_legend_svc",
   "show_title_checkbox_svc",
 ];
 
 singleValueChartEmojiActions.forEach((actionId) => {
-  app.action(actionId, async ({ body, ack, client }) => {
-    await ack();
-
+  app.action(actionId, async ({ body, action, ack, client }) => {
     const view = body.view;
     const state = view?.state?.values || {};
     const private_metadata = JSON.parse(view.private_metadata || "{}");
@@ -1485,57 +1489,163 @@ singleValueChartEmojiActions.forEach((actionId) => {
     const rawTableData = private_metadata.rawTableData;
     const labelCol = private_metadata.labelCol;
     const valueCol = private_metadata.valueCol;
-    const chartTitle = private_metadata.chartTitle;
+    const chartTitle = private_metadata.chartTitle || "";
     const minRange = private_metadata.minRange;
     const maxRange = private_metadata.maxRange;
+    const triggeredId = action.action_id;
+    const blockId = action.block_id;
 
-    // defaults
     let labelEmoji = "none";
     let lowEmoji = "👎";
     let mediumEmoji = "😐";
     let highEmoji = "👍";
-    let showLegend = false;
-    let showTitle = true;
 
-    // iterate over state (like in trend chart)
-    Object.keys(state).forEach((blockId) => {
-      const block = state[blockId];
-      Object.keys(block).forEach((aId) => {
-        const selected = block[aId];
+    let dropdownValue, customValue;
 
-        if (aId === "label_emoji_svc") {
-          labelEmoji = selected?.selected_option?.value || "none";
-        }
-        if (aId === "low_emoji_svc") {
-          lowEmoji = selected?.selected_option?.value || "👎";
-        }
-        if (aId === "medium_emoji_svc") {
-          mediumEmoji = selected?.selected_option?.value || "😐";
-        }
-        if (aId === "high_emoji_svc") {
-          highEmoji = selected?.selected_option?.value || "👍";
-        }
-        if (aId === "show_legend_svc") {
-          showLegend =
-            selected?.selected_options?.some((opt) => opt.value === "show") ||
-            false;
-        }
-        if (aId === "show_title_checkbox_svc") {
-          showTitle =
-            selected?.selected_options?.some((opt) => opt.value === "show") ??
-            true;
-        }
-      });
-    });
+    // --- validate custom emoji input ---
+    if (triggeredId.startsWith("custom_")) {
+      const customValueRaw = action.value?.trim() || "";
+      const isValid = customValueRaw && singleEmojiRegex.test(customValueRaw);
+      if (!isValid) {
+        await ack({
+          response_action: "errors",
+          errors: {
+            [blockId]: "Please enter exactly one emoji character.",
+          },
+        });
+        return;
+      }
+    }
+
+    await ack();
+
+    const blocks = [...view.blocks];
+
+    // --- handle dropdown vs custom, clearing custom inputs on dropdown ---
+    if (triggeredId === "label_emoji_svc") {
+      dropdownValue = action.selected_option?.value;
+      labelEmoji = dropdownValue;
+
+      const customBlockIdx = blocks.findIndex((b) =>
+        b.block_id.startsWith("custom_label_emoji_svc_block")
+      );
+      if (customBlockIdx !== -1) {
+        blocks[customBlockIdx] = {
+          type: "input",
+          block_id: `custom_label_emoji_svc_block_reset_${Date.now()}`,
+          element: {
+            type: "plain_text_input",
+            action_id: "custom_label_emoji_svc",
+            initial_value: "",
+            placeholder: {
+              type: "plain_text",
+              text: "Type a custom emoji to override",
+            },
+          },
+          label: { type: "plain_text", text: `Override with a custom emoji` },
+          dispatch_action: true,
+          optional: true,
+        };
+      }
+    } else if (triggeredId === "custom_label_emoji_svc") {
+      customValue = action.value?.trim();
+      if (customValue) labelEmoji = customValue;
+    }
+
+    if (triggeredId === "low_emoji_svc") {
+      dropdownValue = action.selected_option?.value;
+      lowEmoji = dropdownValue;
+      const customBlockIdx = blocks.findIndex((b) =>
+        b.block_id.startsWith("custom_low_emoji_svc_block")
+      );
+      if (customBlockIdx !== -1) {
+        blocks[customBlockIdx] = {
+          type: "input",
+          block_id: `custom_low_emoji_svc_block_reset_${Date.now()}`,
+          element: {
+            type: "plain_text_input",
+            action_id: "custom_low_emoji_svc",
+            initial_value: "",
+            placeholder: { type: "plain_text", text: "Type a custom emoji to override" },
+          },
+          label: { type: "plain_text", text: `Override with a custom emoji` },
+          dispatch_action: true,
+          optional: true,
+        };
+      }
+    } else if (triggeredId === "custom_low_emoji_svc") {
+      customValue = action.value?.trim();
+      if (customValue) lowEmoji = customValue;
+    }
+
+    if (triggeredId === "medium_emoji_svc") {
+      dropdownValue = action.selected_option?.value;
+      mediumEmoji = dropdownValue;
+      const customBlockIdx = blocks.findIndex((b) =>
+        b.block_id.startsWith("custom_medium_emoji_svc_block")
+      );
+      if (customBlockIdx !== -1) {
+        blocks[customBlockIdx] = {
+          type: "input",
+          block_id: `custom_medium_emoji_svc_block_reset_${Date.now()}`,
+          element: {
+            type: "plain_text_input",
+            action_id: "custom_medium_emoji_svc",
+            initial_value: "",
+            placeholder: { type: "plain_text", text: "Type a custom emoji to override" },
+          },
+          label: { type: "plain_text", text: `Override with a custom emoji` },
+          dispatch_action: true,
+          optional: true,
+        };
+      }
+    } else if (triggeredId === "custom_medium_emoji_svc") {
+      customValue = action.value?.trim();
+      if (customValue) mediumEmoji = customValue;
+    }
+
+    if (triggeredId === "high_emoji_svc") {
+      dropdownValue = action.selected_option?.value;
+      highEmoji = dropdownValue;
+      const customBlockIdx = blocks.findIndex((b) =>
+        b.block_id.startsWith("custom_high_emoji_svc_block")
+      );
+      if (customBlockIdx !== -1) {
+        blocks[customBlockIdx] = {
+          type: "input",
+          block_id: `custom_high_emoji_svc_block_reset_${Date.now()}`,
+          element: {
+            type: "plain_text_input",
+            action_id: "custom_high_emoji_svc",
+            initial_value: "",
+            placeholder: { type: "plain_text", text: "Type a custom emoji to override" },
+          },
+          label: { type: "plain_text", text: `Override with a custom emoji` },
+          dispatch_action: true,
+          optional: true,
+        };
+      }
+    } else if (triggeredId === "custom_high_emoji_svc") {
+      customValue = action.value?.trim();
+      if (customValue) highEmoji = customValue;
+    }
+
+    const showLegend =
+      state.show_legend_block_svc?.show_legend_svc?.selected_options?.some(
+        (opt) => opt.value === "show"
+      ) || false;
+
+    const showTitle =
+      state.show_title_block_svc?.show_title_checkbox_svc?.selected_options?.some(
+        (opt) => opt.value === "show"
+      ) ?? true;
 
     const showLabelEmoji = labelEmoji !== "none";
 
-    // parse and aggregate
+    // --- parse and aggregate ---
     const lines = rawTableData.trim().split("\n");
     const headers = lines[0].split(",").map((h) => h.trim());
-    const rows = lines
-      .slice(1)
-      .map((line) => line.split(",").map((cell) => cell.trim()));
+    const rows = lines.slice(1).map((line) => line.split(",").map((cell) => cell.trim()));
     const labelIdx = headers.indexOf(labelCol);
     const valueIdx = headers.indexOf(valueCol);
 
@@ -1548,6 +1658,7 @@ singleValueChartEmojiActions.forEach((actionId) => {
       }
     });
 
+    // --- build preview ---
     const preview = generateSingleValueChartPreview({
       agg,
       labelEmoji,
@@ -1562,22 +1673,14 @@ singleValueChartEmojiActions.forEach((actionId) => {
       showTitle,
     });
 
-    // update preview block
-    const blocks = [...view.blocks];
-    const previewIdx = blocks.findIndex(
-      (b) => b.block_id === "preview_block_svc"
-    );
+    const previewIdx = blocks.findIndex((b) => b.block_id === "preview_block_svc");
     if (previewIdx !== -1) {
       blocks[previewIdx] = {
         ...blocks[previewIdx],
-        text: {
-          type: "mrkdwn",
-          text: "```\n" + preview + "\n```",
-        },
+        text: { type: "mrkdwn", text: "```\n" + preview + "\n```" },
       };
     }
 
-    // update metadata
     const new_private_metadata = JSON.stringify({
       ...private_metadata,
       preview,
@@ -1802,77 +1905,94 @@ app.view("single_value_column_select", async ({ ack, view, body, client }) => {
     });
 
     const updatedBlocks = [
+      // Label emoji
       {
         type: "section",
         block_id: `label_emoji_block_svc_${Date.now()}`,
-        text: { type: "mrkdwn", text: `*Choose emoji for ${labelCol}*` },
+        text: { type: "mrkdwn", text: `Emoji recommendation for the label column (${labelCol})` },
         accessory: {
           type: "static_select",
           action_id: "label_emoji_svc",
           options: [
             { text: { type: "plain_text", text: "No label" }, value: "none" },
-            ...labelRecs.map((e) => ({
-              text: { type: "plain_text", text: e.emoji },
-              value: e.emoji,
-            })),
+            ...labelRecs.map((e) => ({ text: { type: "plain_text", text: e.emoji }, value: e.emoji })),
           ],
-          initial_option: {
-            text: { type: "plain_text", text: "No label" },
-            value: "none",
-          },
+          initial_option: { text: { type: "plain_text", text: "No label" }, value: "none" },
         },
       },
+      {
+        type: "input",
+        block_id: "custom_label_emoji_svc_block",
+        label: { type: "plain_text", text: `Override with a custom emoji` },
+        element: { type: "plain_text_input", action_id: "custom_label_emoji_svc", initial_value: "", placeholder: { type: "plain_text", text: "Type a custom emoji to override" } },
+        dispatch_action: true,
+        optional: true,
+      },
+      { type: "divider" },
+      // Low emoji
       {
         type: "section",
         block_id: `low_emoji_block_svc_${Date.now()}`,
-        text: { type: "mrkdwn", text: `*Low value emoji for ${valueCol}*` },
+        text: { type: "mrkdwn", text: `Low value emoji recommendation for ${valueCol}` },
         accessory: {
           type: "static_select",
           action_id: "low_emoji_svc",
-          options: valueEmojiGroups.low.map((e) => ({
-            text: { type: "plain_text", text: e.emoji },
-            value: e.emoji,
-          })),
-          initial_option: {
-            text: { type: "plain_text", text: lowEmoji },
-            value: lowEmoji,
-          },
+          options: valueEmojiGroups.low.map((e) => ({ text: { type: "plain_text", text: e.emoji }, value: e.emoji })),
+          initial_option: { text: { type: "plain_text", text: lowEmoji }, value: lowEmoji },
         },
       },
+      {
+        type: "input",
+        block_id: "custom_low_emoji_svc_block",
+        label: { type: "plain_text", text: `Override with a custom emoji` },
+        element: { type: "plain_text_input", action_id: "custom_low_emoji_svc", initial_value: "", placeholder: { type: "plain_text", text: "Type a custom emoji to override" } },
+        dispatch_action: true,
+        optional: true,
+      },
+      { type: "divider" },
+      // Medium emoji
       {
         type: "section",
         block_id: `medium_emoji_block_svc_${Date.now()}`,
-        text: { type: "mrkdwn", text: `*Medium value emoji for ${valueCol}*` },
+        text: { type: "mrkdwn", text: `Medium value emoji recommendation for ${valueCol}` },
         accessory: {
           type: "static_select",
           action_id: "medium_emoji_svc",
-          options: valueEmojiGroups.medium.map((e) => ({
-            text: { type: "plain_text", text: e.emoji },
-            value: e.emoji,
-          })),
-          initial_option: {
-            text: { type: "plain_text", text: mediumEmoji },
-            value: mediumEmoji,
-          },
+          options: valueEmojiGroups.medium.map((e) => ({ text: { type: "plain_text", text: e.emoji }, value: e.emoji })),
+          initial_option: { text: { type: "plain_text", text: mediumEmoji }, value: mediumEmoji },
         },
       },
       {
+        type: "input",
+        block_id: "custom_medium_emoji_svc_block",
+        label: { type: "plain_text", text: `Override with a custom emoji` },
+        element: { type: "plain_text_input", action_id: "custom_medium_emoji_svc", initial_value: "", placeholder: { type: "plain_text", text: "Type a custom emoji to override" } },
+        dispatch_action: true,
+        optional: true,
+      },
+      { type: "divider" },
+      // High emoji
+      {
         type: "section",
         block_id: `high_emoji_block_svc_${Date.now()}`,
-        text: { type: "mrkdwn", text: `*High value emoji for ${valueCol}*` },
+        text: { type: "mrkdwn", text: `High value emoji recommendation for ${valueCol}` },
         accessory: {
           type: "static_select",
           action_id: "high_emoji_svc",
-          options: valueEmojiGroups.high.map((e) => ({
-            text: { type: "plain_text", text: e.emoji },
-            value: e.emoji,
-          })),
-          initial_option: {
-            text: { type: "plain_text", text: highEmoji },
-            value: highEmoji,
-          },
+          options: valueEmojiGroups.high.map((e) => ({ text: { type: "plain_text", text: e.emoji }, value: e.emoji })),
+          initial_option: { text: { type: "plain_text", text: highEmoji }, value: highEmoji },
         },
       },
+      {
+        type: "input",
+        block_id: "custom_high_emoji_svc_block",
+        label: { type: "plain_text", text: `Override with a custom emoji` },
+        element: { type: "plain_text_input", action_id: "custom_high_emoji_svc", initial_value: "", placeholder: { type: "plain_text", text: "Type a custom emoji to override" } },
+        dispatch_action: true,
+        optional: true,
+      },
+      { type: "divider" },
+      // Show title and legend
       {
         type: "section",
         block_id: "show_title_block_svc",
@@ -1880,18 +2000,8 @@ app.view("single_value_column_select", async ({ ack, view, body, client }) => {
         accessory: {
           type: "checkboxes",
           action_id: "show_title_checkbox_svc",
-          options: [
-            {
-              text: { type: "plain_text", text: "Show chart title" },
-              value: "show",
-            },
-          ],
-          initial_options: [
-            {
-              text: { type: "plain_text", text: "Show chart title" },
-              value: "show",
-            },
-          ],
+          options: [{ text: { type: "plain_text", text: "Show chart title" }, value: "show" }],
+          initial_options: [{ text: { type: "plain_text", text: "Show chart title" }, value: "show" }],
         },
       },
       {
@@ -1901,14 +2011,10 @@ app.view("single_value_column_select", async ({ ack, view, body, client }) => {
         accessory: {
           type: "checkboxes",
           action_id: "show_legend_svc",
-          options: [
-            {
-              text: { type: "plain_text", text: "Show legend" },
-              value: "show",
-            },
-          ],
+          options: [{ text: { type: "plain_text", text: "Show legend" }, value: "show" }],
         },
       },
+      // Preview
       {
         type: "section",
         block_id: "preview_block_svc",
@@ -1937,6 +2043,7 @@ app.view("single_value_column_select", async ({ ack, view, body, client }) => {
     });
   })();
 });
+
 
 // TREND CHART //
 function generateTrendChartPreview({
@@ -2019,10 +2126,11 @@ trendChartEmojiActions.forEach((actionId) => {
     const triggeredId = action.action_id;
     const blockId = action.block_id;
 
-    let labelEmoji = private_metadata.labelEmoji || "none";
-    let lowEmoji = private_metadata.lowEmoji || "📉";
-    let mediumEmoji = private_metadata.mediumEmoji || "😐";
-    let highEmoji = private_metadata.highEmoji || "📈";
+    // defaults
+    let labelEmoji = "none";
+    let lowEmoji = "📉";
+    let mediumEmoji = "😐";
+    let highEmoji = "📈";
 
     let dropdownValue, customValue;
 
@@ -2231,10 +2339,6 @@ trendChartEmojiActions.forEach((actionId) => {
     const new_private_metadata = JSON.stringify({
       ...private_metadata,
       preview,
-      labelEmoji,
-      lowEmoji,
-      mediumEmoji,
-      highEmoji,
     });
 
     await client.views.update({
@@ -2667,6 +2771,7 @@ app.view("trend_chart_column_select", async ({ ack, view, body, client }) => {
     });
   })();
 });
+
 
 // PROPORTION CHART //
 function generateProportionChartPreview({
