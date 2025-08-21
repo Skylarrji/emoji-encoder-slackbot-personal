@@ -2546,11 +2546,8 @@ function generateProportionChartPreview({
 const proportionChartEmojiActions = [
   "show_legend_por",
   "show_title_checkbox_por",
-  "por_label_emoji_0",
-  "por_label_emoji_1",
-  "por_label_emoji_2",
-  "por_label_emoji_3",
-  "por_label_emoji_4",
+  ...Array.from({ length: 5 }, (_, i) => `por_label_emoji_${i}`),
+  ...Array.from({ length: 5 }, (_, i) => `custom_por_label_emoji_${i}`),
 ];
 proportionChartEmojiActions.forEach((actionId) => {
   app.action(actionId, async ({ body, ack, client }) => {
@@ -2569,13 +2566,28 @@ proportionChartEmojiActions.forEach((actionId) => {
     Object.keys(state).forEach((blockId) => {
       const block = state[blockId];
       Object.keys(block).forEach((actionId) => {
+        // Handle dropdown selection
         if (/^por_label_emoji_\d$/.test(actionId)) {
-          // Grab the label text from the block (same index)
-          const labelText = view.blocks.find((b) => b.block_id === blockId)
-            ?.text?.text;
+          const sectionBlock = view.blocks.find((b) => b.block_id === blockId);
+          const fullText = sectionBlock?.text?.text || ""; 
+          const labelMatch = fullText.match(/Emoji Recommendation for (.+)/);
+          const labelText = labelMatch ? labelMatch[1] : null;
+
           const selected = block[actionId]?.selected_option?.value;
           if (labelText && selected) {
             emojiMap[labelText.toLowerCase()] = selected;
+          }
+        }
+
+        // Handle custom emoji input override
+        if (/^custom_por_label_emoji_\d$/.test(actionId)) {
+          const inputBlock = view.blocks.find((b) => b.block_id === blockId);
+          const labelMatch = inputBlock?.label?.text.match(/Override with a custom emoji for (.+)/);
+          const labelText = labelMatch ? labelMatch[1] : null;
+
+          const customEmoji = block[actionId]?.value;
+          if (labelText && customEmoji && customEmoji.trim() !== "") {
+            emojiMap[labelText.toLowerCase()] = customEmoji.trim();
           }
         }
       });
@@ -2853,32 +2865,48 @@ app.view(
             text: `*Choose emoji for each unique value in the label column (${labelCol})*`,
           },
         },
+        {
+          type: "divider",
+        },
         ...topFive.map((label, i) => {
-          const recs = getRecEmojiOptions(
-            suggestions,
-            labelCol,
-            "value",
-            label
-          );
+          const recs = getRecEmojiOptions(suggestions, labelCol, "value", label);
 
-          return {
-            type: "section",
-            block_id: `label_emoji_block_${i}_${Date.now()}`,
-            text: { type: "mrkdwn", text: label },
-            accessory: {
-              type: "static_select",
-              action_id: `por_label_emoji_${i}`,
-              options: recs.map((e) => ({
-                text: { type: "plain_text", text: e.emoji },
-                value: e.emoji,
-              })),
-              initial_option: {
-                text: { type: "plain_text", text: realEmojiMap[label] },
-                value: realEmojiMap[label],
+          return [
+            {
+              type: "section",
+              block_id: `label_emoji_block_${i}`,
+              text: { type: "mrkdwn", text: `Emoji Recommendation for ${label}` },
+              accessory: {
+                type: "static_select",
+                action_id: `por_label_emoji_${i}`,
+                options: recs.map((e) => ({
+                  text: { type: "plain_text", text: e.emoji },
+                  value: e.emoji,
+                })),
+                initial_option: {
+                  text: { type: "plain_text", text: realEmojiMap[label] },
+                  value: realEmojiMap[label],
+                },
               },
             },
-          };
-        }),
+            {
+              type: "input",
+              block_id: `custom_label_emoji_block_${i}`,
+              label: { type: "plain_text", text: `Override with a custom emoji for ${label}` },
+              element: {
+                type: "plain_text_input",
+                action_id: `custom_por_label_emoji_${i}`,
+                initial_value: "",
+                placeholder: { type: "plain_text", text: "Type a custom emoji to override" },
+              },
+              "dispatch_action": true,
+              optional: true,
+            },
+            {
+              type: "divider",
+            },
+          ];
+        }).flat(),
         {
           type: "section",
           block_id: "show_title_block_por",
