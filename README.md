@@ -53,7 +53,7 @@ A Slack bot that creates emoji-based data visualizations from CSV data.
    To access the tokens:
    - Navigate to this URL: https://api.slack.com/apps
 
-
+   - Click on **Emoji Encoder** under App Name
    - Go to **Basic Information** on the lefthand side
    - Click on the **Development** token under the App-Level Tokens section
    - Enter the token to replace the `your_slack_app_token` in the `.env` file
