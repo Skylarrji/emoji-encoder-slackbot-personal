@@ -2820,7 +2820,7 @@ app.view(
             block_id: "label_emoji_block_por",
             text: {
               type: "mrkdwn",
-              text: `*Choose emoji for each unique value in the label column (${labelCol})*`,
+              text: `*Choose an emoji for each unique value in the label column (${labelCol})*`,
             },
           },
           ...topFive.map((label, i) => ({
@@ -2897,7 +2897,7 @@ app.view(
           block_id: "label_emoji_block_por",
           text: {
             type: "mrkdwn",
-            text: `*Choose emoji for each unique value in the label column (${labelCol})*`,
+            text: `*Choose an emoji for each unique value in the label column (${labelCol})*`,
           },
         },
         {
