@@ -332,6 +332,8 @@ export const compareTemporalLabels = (a, b) => {
   return aMoment.valueOf() - bMoment.valueOf();
 };
 
+const singleEmojiRegex = /^(\p{Emoji})$/u; // used for custom emoji validation
+
 app.view("emoji_chart_modal", async ({ ack, view, body, client }) => {
   const rawTableData = view.state.values.table_data_block.table_input.value;
   const chartTitle =
@@ -884,13 +886,13 @@ async function recommendEmojis(tableData = null, tableDescription = null) {
 
   // return cache immediately if available
   if (emojiRecommendationCache.has(cacheKey)) {
-    console.log("Using cached emoji recommendations.");
+    // console.log("Using cached emoji recommendations.");
     return emojiRecommendationCache.get(cacheKey);
   }
 
   // if already computing, wait for it
   if (inFlight.has(cacheKey)) {
-    console.log("Awaiting in-flight recommendation call.");
+    // console.log("Awaiting in-flight recommendation call.");
     return inFlight.get(cacheKey);
   }
 
@@ -898,10 +900,10 @@ async function recommendEmojis(tableData = null, tableDescription = null) {
   const promise = (async () => {
     try {
       const recommendations = await callEmojiRecommendation(tableData, tableDescription);
-      console.log("Emoji recommendations:", JSON.stringify(recommendations));
+      // console.log("Emoji recommendations:", JSON.stringify(recommendations));
       if (recommendations && (typeof recommendations === "object" && Object.keys(recommendations).length > 0)) {
         emojiRecommendationCache.set(cacheKey, recommendations);
-        console.log("Cached emoji recommendations.");
+        // console.log("Cached emoji recommendations.");
       }
       return recommendations || [];
     } catch (err) {
@@ -2550,8 +2552,7 @@ const proportionChartEmojiActions = [
   ...Array.from({ length: 5 }, (_, i) => `custom_por_label_emoji_${i}`),
 ];
 proportionChartEmojiActions.forEach((actionId) => {
-  app.action(actionId, async ({ body, ack, client }) => {
-    await ack();
+  app.action(actionId, async ({ body, action, ack, client }) => {
     const view = body.view;
     const state = view?.state?.values || {};
     const private_metadata = JSON.parse(view.private_metadata || "{}");
@@ -2561,38 +2562,87 @@ proportionChartEmojiActions.forEach((actionId) => {
     const chartTitle = private_metadata.chartTitle || "";
     const emojiMap = { ...private_metadata.emojiMap };
     const freqCol = private_metadata.freqCol || "none";
+    const triggeredId = action.action_id;
+    const blockId = action.block_id;
 
-    // Update emojiMap based on the current state
-    Object.keys(state).forEach((blockId) => {
-      const block = state[blockId];
-      Object.keys(block).forEach((actionId) => {
-        // Handle dropdown selection
-        if (/^por_label_emoji_\d$/.test(actionId)) {
-          const sectionBlock = view.blocks.find((b) => b.block_id === blockId);
-          const fullText = sectionBlock?.text?.text || ""; 
-          const labelMatch = fullText.match(/Emoji Recommendation for (.+)/);
-          const labelText = labelMatch ? labelMatch[1] : null;
+    let idx, labelText, dropdownValue, customValue;
 
-          const selected = block[actionId]?.selected_option?.value;
-          if (labelText && selected) {
-            emojiMap[labelText.toLowerCase()] = selected;
-          }
-        }
+    const inputMatch = triggeredId.match(/^custom_por_label_emoji_(\d+)$/);
+    const dropdownMatch = triggeredId.match(/^por_label_emoji_(\d+)$/);
 
-        // Handle custom emoji input override
-        if (/^custom_por_label_emoji_\d$/.test(actionId)) {
-          const inputBlock = view.blocks.find((b) => b.block_id === blockId);
-          const labelMatch = inputBlock?.label?.text.match(/Override with a custom emoji for (.+)/);
-          const labelText = labelMatch ? labelMatch[1] : null;
+    // --- validate custom emoji input ---
+    if (inputMatch) {
+      const customValueRaw = action.value?.trim() || "";
+      const isValid = customValueRaw && singleEmojiRegex.test(customValueRaw);
+      if (!isValid) {
+        await ack({
+          response_action: "errors",
+          errors: {
+            [blockId]: "Please enter exactly one emoji character.",
+          },
+        });
+        return;
+      }
+    }
 
-          const customEmoji = block[actionId]?.value;
-          if (labelText && customEmoji && customEmoji.trim() !== "") {
-            emojiMap[labelText.toLowerCase()] = customEmoji.trim();
-          }
-        }
-      });
-    });
+    await ack();
 
+    if (dropdownMatch) {
+      idx = dropdownMatch[1];
+      labelText = private_metadata.labels[idx];
+      dropdownValue = action.selected_option?.value;
+
+      // --- clear paired custom input by regenerating block_id ---
+      const blocks = [...view.blocks];
+      const customBlockIdx = blocks.findIndex((b) =>
+        b.block_id.startsWith(`custom_label_emoji_block_${idx}`)
+      );
+      if (customBlockIdx !== -1) {
+        blocks[customBlockIdx] = {
+          type: "input",
+          block_id: `custom_label_emoji_block_${idx}_reset_${Date.now()}`,
+          element: {
+            type: "plain_text_input",
+            action_id: `custom_por_label_emoji_${idx}`,
+            initial_value: "", // force reset
+            placeholder: {
+              type: "plain_text",
+              text: "Type a custom emoji to override",
+            },
+          },
+          label: {
+            type: "plain_text",
+            text: `Override with a custom emoji for ${labelText}`,
+          },
+          dispatch_action: true,
+          optional: true,
+        };
+      }
+
+      view.blocks = blocks;
+      customValue = undefined; // ignore custom input if dropdown triggered
+
+    } else if (inputMatch) {
+      idx = inputMatch[1];
+      labelText = private_metadata.labels[idx];
+      customValue = action.value?.trim();
+
+      // also peek at dropdown (optional fallback)
+      const dropdownBlock = state[`label_emoji_block_${idx}`];
+      dropdownValue =
+        dropdownBlock?.[`por_label_emoji_${idx}`]?.selected_option?.value;
+    }
+
+    // --- update emoji map ---
+    if (labelText) {
+      if (customValue) {
+        emojiMap[labelText.toLowerCase()] = customValue;
+      } else if (dropdownValue) {
+        emojiMap[labelText.toLowerCase()] = dropdownValue;
+      }
+    }
+
+    // --- preview rebuild ---
     const showLegend =
       state.show_legend_block_por?.show_legend_por?.selected_options?.some(
         (opt) => opt.value === "show"
@@ -2603,35 +2653,26 @@ proportionChartEmojiActions.forEach((actionId) => {
         (opt) => opt.value === "show"
       ) ?? true;
 
-    // parse CSV data
     const lines = rawTableData.trim().split("\n");
     const headers = lines[0].split(",").map((h) => h.trim());
-    const rows = lines
-      .slice(1)
-      .map((line) => line.split(",").map((cell) => cell.trim()));
+    const rows = lines.slice(1).map((line) =>
+      line.split(",").map((cell) => cell.trim())
+    );
 
     const labelIdx = headers.indexOf(labelCol);
-
-    // count frequency of each label
     const agg = {};
 
     if (freqCol !== "none") {
-      // use frequency specified by the frequency column if selected
       const freqIdx = headers.indexOf(freqCol);
-
       rows.forEach((row) => {
         const rawLabel = row[labelIdx]?.trim() || "unknown";
         const key = rawLabel.toLowerCase();
-
-        const rawFreq = row[freqIdx]?.trim();
-        const freqVal = Number(rawFreq);
-
+        const freqVal = Number(row[freqIdx]?.trim());
         if (!isNaN(freqVal)) {
           agg[key] = (agg[key] || 0) + freqVal;
         }
       });
     } else {
-      // else, use the count of each unique label
       rows.forEach((row) => {
         const rawLabel = row[labelIdx]?.trim() || "unknown";
         const key = rawLabel.toLowerCase();
@@ -2639,7 +2680,6 @@ proportionChartEmojiActions.forEach((actionId) => {
       });
     }
 
-    // Generate preview
     const formattedPreview = generateProportionChartPreview({
       agg,
       emojiMap,
@@ -2652,7 +2692,6 @@ proportionChartEmojiActions.forEach((actionId) => {
         ) || 10,
     });
 
-    // Update preview block
     const blocks = [...view.blocks];
     const previewIdx = blocks.findIndex(
       (b) => b.block_id === "preview_block_por"
@@ -2660,14 +2699,10 @@ proportionChartEmojiActions.forEach((actionId) => {
     if (previewIdx !== -1) {
       blocks[previewIdx] = {
         ...blocks[previewIdx],
-        text: {
-          type: "mrkdwn",
-          text: "```\n" + formattedPreview + "\n```",
-        },
+        text: { type: "mrkdwn", text: "```\n" + formattedPreview + "\n```" },
       };
     }
 
-    // Update metadata & view
     const new_private_metadata = JSON.stringify({
       ...private_metadata,
       emojiMap,
@@ -2757,6 +2792,7 @@ app.view(
       preview: formattedPreview,
       emojiMap: placeholderEmojiMap,
       freqCol,
+      labels: topFive,
     });
 
     // ---- load modal with placeholders ----
@@ -2843,7 +2879,6 @@ app.view(
           label // the actual categorical value
         );
 
-        console.log("recs: ", JSON.stringify(recs));
         realEmojiMap[label] = recs[0]?.emoji || "❓";
       }
 
@@ -2978,6 +3013,7 @@ app.view(
             preview: updatedPreview,
             emojiMap: realEmojiMap,
             freqCol,
+            labels: topFive,
           }),
           blocks: updatedBlocks,
         },
