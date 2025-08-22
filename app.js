@@ -2274,7 +2274,7 @@ function generateTrendChartPreview({
   const lowT = min + range / 3;
   const highT = min + (2 * range) / 3;
 
-  let preview = `${showLabelEmoji ? labelEmoji : ""}${labelCol} `;
+  let preview = `${showLabelEmoji ? `${labelEmoji} ` : ""}${labelCol} `;
 
   preview += entries
     .map(([_, val]) => {
