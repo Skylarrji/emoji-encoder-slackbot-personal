@@ -33,7 +33,7 @@ A Slack bot that creates emoji-based data visualizations from CSV data.
    npm install
    ```
 
-2. **Install dependencies on Python Backend:**
+3. **Install dependencies on Python Backend:**
 
    ```bash
    cd ../emoji-recommendation
@@ -42,7 +42,7 @@ A Slack bot that creates emoji-based data visualizations from CSV data.
    pip install -r requirements.txt
    ```
 
-3. **Set up environment variables:**
+4. **Set up environment variables:**
    Create a `.env` file in the root `emoji-encoder-slackbot` directory and enter the following information
 
    ```
@@ -60,7 +60,7 @@ A Slack bot that creates emoji-based data visualizations from CSV data.
    - Go to **OAuth & Permissions** on the lefthand side
    - Enter the value under **Bot User OAuth Token** to replace `your_slack_bot_token` in the `.env` file
 
-4. **Start the bot:**
+5. **Start the bot:**
    ```bash
    cd ../emoji-encoder-slackbot
    npm run start

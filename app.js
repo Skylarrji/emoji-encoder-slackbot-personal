@@ -3,14 +3,8 @@ const { App } = pkg;
 import stringWidth from "string-width";
 import moment from "moment";
 import "dotenv/config";
-import { spawn } from "child_process";
-import { promises as fs } from "fs";
-import path from "path";
-import { fileURLToPath } from "url";
 import emojiRegex from "emoji-regex";
-
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
+import axios from "axios";
 
 const app = new App({
   token: process.env.SLACK_BOT_TOKEN,
@@ -733,24 +727,9 @@ app.view("emoji_chart_modal", async ({ ack, view, body, client }) => {
   }
 });
 
-// helper to safely delete files
-async function safeUnlink(filePath) {
-  try {
-    await fs.unlink(filePath);
-  } catch (err) {
-    if (err.code !== "ENOENT") {
-      console.error(`Failed to delete ${filePath}:`, err);
-    }
-  }
-}
-
 // helper function to call the Python emoji recommendation script
 async function callEmojiRecommendation(tableData, tableDescription) {
-  const tempCsvPath = path.join(__dirname, "temp_table.csv");
-  const tempJsonPath = path.join(__dirname, "temp_recommendations.json");
-
   try {
-    // format the CSV data: first row is description, second row headers, then data
     const numColumns = tableData.headers.length;
     const descriptionRow = tableDescription + ",".repeat(numColumns - 1);
     const csvContent = [
@@ -759,89 +738,14 @@ async function callEmojiRecommendation(tableData, tableDescription) {
       ...tableData.rows.map((row) => row.join(",")),
     ].join("\n");
 
-    await fs.writeFile(tempCsvPath, csvContent);
-
-    const pythonModulePath = path.join(
-      __dirname,
-      "..",
-      "emoji-recommendation",
-      "src"
-    );
-    const venvPythonPath = path.join(
-      __dirname,
-      "..",
-      "emoji-recommendation",
-      ".venv",
-      "bin",
-      "python"
-    );
-
-    // check if virtual environment exists
-    try {
-      await fs.access(venvPythonPath);
-    } catch {
-      throw new Error(
-        `Virtual environment not found at ${venvPythonPath}. Please run:\n` +
-          `cd ../emoji-recommendation\n` +
-          `python3 -m venv .venv\n` +
-          `source .venv/bin/activate\n` +
-          `pip install -r requirements.txt`
-      );
-    }
-
-    return new Promise((resolve, reject) => {
-      const pythonProcess = spawn(
-        venvPythonPath,
-        [
-          "-m",
-          "emoji_data.generate_emojis",
-          "--input_csv",
-          tempCsvPath,
-          "--output_json",
-          tempJsonPath,
-          "--top_k",
-          "5",
-        ],
-        { cwd: pythonModulePath, stdio: ["pipe", "pipe", "pipe"] }
-      );
-
-      let stderr = "";
-
-      pythonProcess.stderr.on("data", (data) => {
-        stderr += data.toString();
-      });
-
-      pythonProcess.on("close", async (code) => {
-        try {
-          if (code === 0) {
-            // read the generated JSON file
-            const jsonContent = await fs.readFile(tempJsonPath, "utf8");
-            const recommendations = JSON.parse(jsonContent);
-
-            // clean up temporary files safely
-            await safeUnlink(tempCsvPath);
-            await safeUnlink(tempJsonPath);
-
-            resolve(recommendations);
-          } else {
-            console.error("Python script failed:", stderr);
-            reject(
-              new Error(`Python script failed with code ${code}: ${stderr}`)
-            );
-          }
-        } catch (err) {
-          await safeUnlink(tempCsvPath);
-          await safeUnlink(tempJsonPath);
-          reject(err);
-        }
-      });
+    const response = await axios.post(process.env.EMOJI_API_URL + "/recommend", {
+      csv: csvContent,
+      top_k: 5
     });
-  } catch (error) {
-    // make sure temp files are cleaned up on any unexpected error
-    await safeUnlink(tempCsvPath);
-    await safeUnlink(tempJsonPath);
-    console.error("Error calling emoji recommendation:", error);
-    throw error;
+    return response.data;
+  } catch (err) {
+    console.error("Emoji API error:", err);
+    return {};
   }
 }
 
