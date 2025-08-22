@@ -809,8 +809,20 @@ async function callEmojiRecommendation(tableData, tableDescription) {
 
     await fs.writeFile(tempCsvPath, csvContent);
 
-    const pythonModulePath = path.join(__dirname, "..", "emoji-recommendation", "src");
-    const venvPythonPath = path.join(__dirname, "..", "emoji-recommendation", ".venv", "bin", "python");
+    const pythonModulePath = path.join(
+      __dirname,
+      "..",
+      "emoji-recommendation",
+      "src"
+    );
+    const venvPythonPath = path.join(
+      __dirname,
+      "..",
+      "emoji-recommendation",
+      ".venv",
+      "bin",
+      "python"
+    );
 
     // check if virtual environment exists
     try {
@@ -831,9 +843,12 @@ async function callEmojiRecommendation(tableData, tableDescription) {
         [
           "-m",
           "emoji_data.generate_emojis",
-          "--input_csv", tempCsvPath,
-          "--output_json", tempJsonPath,
-          "--top_k", "5",
+          "--input_csv",
+          tempCsvPath,
+          "--output_json",
+          tempJsonPath,
+          "--top_k",
+          "5",
         ],
         { cwd: pythonModulePath, stdio: ["pipe", "pipe", "pipe"] }
       );
@@ -858,7 +873,9 @@ async function callEmojiRecommendation(tableData, tableDescription) {
             resolve(recommendations);
           } else {
             console.error("Python script failed:", stderr);
-            reject(new Error(`Python script failed with code ${code}: ${stderr}`));
+            reject(
+              new Error(`Python script failed with code ${code}: ${stderr}`)
+            );
           }
         } catch (err) {
           await safeUnlink(tempCsvPath);
@@ -900,15 +917,25 @@ async function recommendEmojis(tableData = null, tableDescription = null) {
   // otherwise start computing
   const promise = (async () => {
     try {
-      const recommendations = await callEmojiRecommendation(tableData, tableDescription);
+      const recommendations = await callEmojiRecommendation(
+        tableData,
+        tableDescription
+      );
       // console.log("Emoji recommendations:", JSON.stringify(recommendations));
-      if (recommendations && (typeof recommendations === "object" && Object.keys(recommendations).length > 0)) {
+      if (
+        recommendations &&
+        typeof recommendations === "object" &&
+        Object.keys(recommendations).length > 0
+      ) {
         emojiRecommendationCache.set(cacheKey, recommendations);
         // console.log("Cached emoji recommendations.");
       }
       return recommendations || [];
     } catch (err) {
-      console.error("Failed to get emoji recommendations from Python backend:", err);
+      console.error(
+        "Failed to get emoji recommendations from Python backend:",
+        err
+      );
       return [];
     } finally {
       inFlight.delete(cacheKey);
@@ -918,7 +945,6 @@ async function recommendEmojis(tableData = null, tableDescription = null) {
   inFlight.set(cacheKey, promise);
   return promise;
 }
-
 
 function getRecEmojiOptions(recommendations, colName, type, value = null) {
   let emojis = [];
@@ -1074,7 +1100,10 @@ barChartEmojiActions.forEach((actionId) => {
             type: "plain_text_input",
             action_id: "custom_label_emoji_bar",
             initial_value: "",
-            placeholder: { type: "plain_text", text: "Type a custom emoji to override" },
+            placeholder: {
+              type: "plain_text",
+              text: "Type a custom emoji to override",
+            },
           },
           label: { type: "plain_text", text: `Override with a custom emoji` },
           dispatch_action: true,
@@ -1101,7 +1130,10 @@ barChartEmojiActions.forEach((actionId) => {
             type: "plain_text_input",
             action_id: "custom_value_emoji_bar",
             initial_value: "",
-            placeholder: { type: "plain_text", text: "Type a custom emoji to override" },
+            placeholder: {
+              type: "plain_text",
+              text: "Type a custom emoji to override",
+            },
           },
           label: { type: "plain_text", text: `Override with a custom emoji` },
           dispatch_action: true,
@@ -1133,7 +1165,9 @@ barChartEmojiActions.forEach((actionId) => {
     // --- parse and aggregate ---
     const lines = rawTableData.trim().split("\n");
     const headers = lines[0].split(",").map((h) => h.trim());
-    const rows = lines.slice(1).map((line) => line.split(",").map((cell) => cell.trim()));
+    const rows = lines
+      .slice(1)
+      .map((line) => line.split(",").map((cell) => cell.trim()));
     const labelIdx = headers.indexOf(labelCol);
     const valueIdx = headers.indexOf(valueCol);
 
@@ -1158,9 +1192,14 @@ barChartEmojiActions.forEach((actionId) => {
       showEmojiAtEnd,
     });
 
-    const previewIdx = blocks.findIndex((b) => b.block_id === "preview_block_bar");
+    const previewIdx = blocks.findIndex(
+      (b) => b.block_id === "preview_block_bar"
+    );
     if (previewIdx !== -1) {
-      blocks[previewIdx] = { ...blocks[previewIdx], text: { type: "mrkdwn", text: "```\n" + preview + "\n```" } };
+      blocks[previewIdx] = {
+        ...blocks[previewIdx],
+        text: { type: "mrkdwn", text: "```\n" + preview + "\n```" },
+      };
     }
 
     const new_private_metadata = JSON.stringify({
@@ -1173,7 +1212,15 @@ barChartEmojiActions.forEach((actionId) => {
     await client.views.update({
       view_id: view.id,
       hash: view.hash,
-      view: { type: view.type, title: view.title, blocks, callback_id: view.callback_id, private_metadata: new_private_metadata, submit: view.submit, close: view.close },
+      view: {
+        type: view.type,
+        title: view.title,
+        blocks,
+        callback_id: view.callback_id,
+        private_metadata: new_private_metadata,
+        submit: view.submit,
+        close: view.close,
+      },
     });
   });
 });
@@ -1248,7 +1295,10 @@ app.view("bar_chart_column_select", async ({ ack, view, body, client }) => {
         {
           type: "section",
           block_id: "label_emoji_block_bar",
-          text: { type: "mrkdwn", text: `*Label emoji for ${labelCol}*: No label` },
+          text: {
+            type: "mrkdwn",
+            text: `*Label emoji for ${labelCol}*: No label`,
+          },
         },
         {
           type: "section",
@@ -1258,12 +1308,18 @@ app.view("bar_chart_column_select", async ({ ack, view, body, client }) => {
         {
           type: "section",
           block_id: "show_end_emoji_block_bar",
-          text: { type: "mrkdwn", text: "*Show emoji only at the end of each bar?*\n[ ] Show emoji only at the end" },
+          text: {
+            type: "mrkdwn",
+            text: "*Show emoji only at the end of each bar?*\n[ ] Show emoji only at the end",
+          },
         },
         {
           type: "section",
           block_id: "show_title_block_bar",
-          text: { type: "mrkdwn", text: "*Show chart title?*\n[x] Show chart title" },
+          text: {
+            type: "mrkdwn",
+            text: "*Show chart title?*\n[x] Show chart title",
+          },
         },
         {
           type: "section",
@@ -1273,7 +1329,10 @@ app.view("bar_chart_column_select", async ({ ack, view, body, client }) => {
         {
           type: "section",
           block_id: "preview_block_bar",
-          text: { type: "mrkdwn", text: "```\n" + placeholderPreview + "\n```" },
+          text: {
+            type: "mrkdwn",
+            text: "```\n" + placeholderPreview + "\n```",
+          },
         },
       ],
     },
@@ -1285,8 +1344,16 @@ app.view("bar_chart_column_select", async ({ ack, view, body, client }) => {
     const tableDescription = chartTitle || "Bar chart";
 
     const recommendations = await recommendEmojis(tableData, tableDescription);
-    const labelRecs = getRecEmojiOptions(recommendations, labelCol, "column_name");
-    const valueRecs = getRecEmojiOptions(recommendations, valueCol, "column_name");
+    const labelRecs = getRecEmojiOptions(
+      recommendations,
+      labelCol,
+      "column_name"
+    );
+    const valueRecs = getRecEmojiOptions(
+      recommendations,
+      valueCol,
+      "column_name"
+    );
 
     const labelEmoji = "none";
     const valueEmoji = valueRecs[0]?.emoji || "❓";
@@ -1308,22 +1375,39 @@ app.view("bar_chart_column_select", async ({ ack, view, body, client }) => {
       {
         type: "section",
         block_id: `label_emoji_block_bar_${Date.now()}`,
-        text: { type: "mrkdwn", text: `Emoji recommendation for the label column (${labelCol})` },
+        text: {
+          type: "mrkdwn",
+          text: `Emoji recommendation for the label column (${labelCol})`,
+        },
         accessory: {
           type: "static_select",
           action_id: "label_emoji_bar",
           options: [
             { text: { type: "plain_text", text: "No label" }, value: "none" },
-            ...labelRecs.map((e) => ({ text: { type: "plain_text", text: e.emoji }, value: e.emoji })),
+            ...labelRecs.map((e) => ({
+              text: { type: "plain_text", text: e.emoji },
+              value: e.emoji,
+            })),
           ],
-          initial_option: { text: { type: "plain_text", text: "No label" }, value: "none" },
+          initial_option: {
+            text: { type: "plain_text", text: "No label" },
+            value: "none",
+          },
         },
       },
       {
         type: "input",
         block_id: "custom_label_emoji_block_bar",
         label: { type: "plain_text", text: `Override with a custom emoji` },
-        element: { type: "plain_text_input", action_id: "custom_label_emoji_bar", initial_value: "", placeholder: { type: "plain_text", text: "Type a custom emoji to override" } },
+        element: {
+          type: "plain_text_input",
+          action_id: "custom_label_emoji_bar",
+          initial_value: "",
+          placeholder: {
+            type: "plain_text",
+            text: "Type a custom emoji to override",
+          },
+        },
         dispatch_action: true,
         optional: true,
       },
@@ -1332,23 +1416,42 @@ app.view("bar_chart_column_select", async ({ ack, view, body, client }) => {
       {
         type: "section",
         block_id: `value_emoji_block_bar_${Date.now()}`,
-        text: { type: "mrkdwn", text: `Emoji recommendation for the value column (${valueCol})` },
+        text: {
+          type: "mrkdwn",
+          text: `Emoji recommendation for the value column (${valueCol})`,
+        },
         accessory: {
           type: "static_select",
           action_id: "value_emoji_bar",
-          options: valueRecs.length > 0
-            ? valueRecs.map((e) => ({ text: { type: "plain_text", text: e.emoji }, value: e.emoji }))
-            : [{ text: { type: "plain_text", text: "❓" }, value: "❓" }],
-          initial_option: valueRecs.length > 0
-            ? { text: { type: "plain_text", text: valueRecs[0].emoji }, value: valueRecs[0].emoji }
-            : { text: { type: "plain_text", text: "❓" }, value: "❓" },
+          options:
+            valueRecs.length > 0
+              ? valueRecs.map((e) => ({
+                  text: { type: "plain_text", text: e.emoji },
+                  value: e.emoji,
+                }))
+              : [{ text: { type: "plain_text", text: "❓" }, value: "❓" }],
+          initial_option:
+            valueRecs.length > 0
+              ? {
+                  text: { type: "plain_text", text: valueRecs[0].emoji },
+                  value: valueRecs[0].emoji,
+                }
+              : { text: { type: "plain_text", text: "❓" }, value: "❓" },
         },
       },
       {
         type: "input",
         block_id: "custom_value_emoji_block_bar",
         label: { type: "plain_text", text: `Override with a custom emoji` },
-        element: { type: "plain_text_input", action_id: "custom_value_emoji_bar", initial_value: "", placeholder: { type: "plain_text", text: "Type a custom emoji to override" } },
+        element: {
+          type: "plain_text_input",
+          action_id: "custom_value_emoji_bar",
+          initial_value: "",
+          placeholder: {
+            type: "plain_text",
+            text: "Type a custom emoji to override",
+          },
+        },
         dispatch_action: true,
         optional: true,
       },
@@ -1357,11 +1460,19 @@ app.view("bar_chart_column_select", async ({ ack, view, body, client }) => {
       {
         type: "section",
         block_id: "show_end_emoji_block_bar",
-        text: { type: "mrkdwn", text: "*Show emoji only at the end of each bar?*" },
+        text: {
+          type: "mrkdwn",
+          text: "*Show emoji only at the end of each bar?*",
+        },
         accessory: {
           type: "checkboxes",
           action_id: "show_end_emoji_checkbox_bar",
-          options: [{ text: { type: "plain_text", text: "Show emoji only at the end" }, value: "show" }],
+          options: [
+            {
+              text: { type: "plain_text", text: "Show emoji only at the end" },
+              value: "show",
+            },
+          ],
         },
       },
       {
@@ -1371,8 +1482,18 @@ app.view("bar_chart_column_select", async ({ ack, view, body, client }) => {
         accessory: {
           type: "checkboxes",
           action_id: "show_title_checkbox_bar",
-          options: [{ text: { type: "plain_text", text: "Show chart title" }, value: "show" }],
-          initial_options: [{ text: { type: "plain_text", text: "Show chart title" }, value: "show" }],
+          options: [
+            {
+              text: { type: "plain_text", text: "Show chart title" },
+              value: "show",
+            },
+          ],
+          initial_options: [
+            {
+              text: { type: "plain_text", text: "Show chart title" },
+              value: "show",
+            },
+          ],
         },
       },
       {
@@ -1382,7 +1503,12 @@ app.view("bar_chart_column_select", async ({ ack, view, body, client }) => {
         accessory: {
           type: "checkboxes",
           action_id: "show_legend_bar",
-          options: [{ text: { type: "plain_text", text: "Show legend" }, value: "show" }],
+          options: [
+            {
+              text: { type: "plain_text", text: "Show legend" },
+              value: "show",
+            },
+          ],
         },
       },
       // Preview
@@ -1414,7 +1540,6 @@ app.view("bar_chart_column_select", async ({ ack, view, body, client }) => {
     });
   })();
 });
-
 
 /// SINGLE VALUE CHART ///
 function generateSingleValueChartPreview({
@@ -1513,10 +1638,10 @@ singleValueChartEmojiActions.forEach((actionId) => {
     const triggeredId = action.action_id;
     const blockId = action.block_id;
 
-    let labelEmoji = "none";
-    let lowEmoji = "👎";
-    let mediumEmoji = "😐";
-    let highEmoji = "👍";
+    let labelEmoji = private_metadata.labelEmoji || "none";
+    let lowEmoji = private_metadata.lowEmoji || "👎";
+    let mediumEmoji = private_metadata.mediumEmoji || "😐";
+    let highEmoji = private_metadata.highEmoji || "👍";
 
     let dropdownValue, customValue;
 
@@ -1584,7 +1709,10 @@ singleValueChartEmojiActions.forEach((actionId) => {
             type: "plain_text_input",
             action_id: "custom_low_emoji_svc",
             initial_value: "",
-            placeholder: { type: "plain_text", text: "Type a custom emoji to override" },
+            placeholder: {
+              type: "plain_text",
+              text: "Type a custom emoji to override",
+            },
           },
           label: { type: "plain_text", text: `Override with a custom emoji` },
           dispatch_action: true,
@@ -1610,7 +1738,10 @@ singleValueChartEmojiActions.forEach((actionId) => {
             type: "plain_text_input",
             action_id: "custom_medium_emoji_svc",
             initial_value: "",
-            placeholder: { type: "plain_text", text: "Type a custom emoji to override" },
+            placeholder: {
+              type: "plain_text",
+              text: "Type a custom emoji to override",
+            },
           },
           label: { type: "plain_text", text: `Override with a custom emoji` },
           dispatch_action: true,
@@ -1636,7 +1767,10 @@ singleValueChartEmojiActions.forEach((actionId) => {
             type: "plain_text_input",
             action_id: "custom_high_emoji_svc",
             initial_value: "",
-            placeholder: { type: "plain_text", text: "Type a custom emoji to override" },
+            placeholder: {
+              type: "plain_text",
+              text: "Type a custom emoji to override",
+            },
           },
           label: { type: "plain_text", text: `Override with a custom emoji` },
           dispatch_action: true,
@@ -1663,7 +1797,9 @@ singleValueChartEmojiActions.forEach((actionId) => {
     // --- parse and aggregate ---
     const lines = rawTableData.trim().split("\n");
     const headers = lines[0].split(",").map((h) => h.trim());
-    const rows = lines.slice(1).map((line) => line.split(",").map((cell) => cell.trim()));
+    const rows = lines
+      .slice(1)
+      .map((line) => line.split(",").map((cell) => cell.trim()));
     const labelIdx = headers.indexOf(labelCol);
     const valueIdx = headers.indexOf(valueCol);
 
@@ -1691,7 +1827,9 @@ singleValueChartEmojiActions.forEach((actionId) => {
       showTitle,
     });
 
-    const previewIdx = blocks.findIndex((b) => b.block_id === "preview_block_svc");
+    const previewIdx = blocks.findIndex(
+      (b) => b.block_id === "preview_block_svc"
+    );
     if (previewIdx !== -1) {
       blocks[previewIdx] = {
         ...blocks[previewIdx],
@@ -1702,6 +1840,10 @@ singleValueChartEmojiActions.forEach((actionId) => {
     const new_private_metadata = JSON.stringify({
       ...private_metadata,
       preview,
+      labelEmoji,
+      lowEmoji,
+      mediumEmoji,
+      highEmoji,
     });
 
     await client.views.update({
@@ -1927,22 +2069,39 @@ app.view("single_value_column_select", async ({ ack, view, body, client }) => {
       {
         type: "section",
         block_id: `label_emoji_block_svc_${Date.now()}`,
-        text: { type: "mrkdwn", text: `Emoji recommendation for the label column (${labelCol})` },
+        text: {
+          type: "mrkdwn",
+          text: `Emoji recommendation for the label column (${labelCol})`,
+        },
         accessory: {
           type: "static_select",
           action_id: "label_emoji_svc",
           options: [
             { text: { type: "plain_text", text: "No label" }, value: "none" },
-            ...labelRecs.map((e) => ({ text: { type: "plain_text", text: e.emoji }, value: e.emoji })),
+            ...labelRecs.map((e) => ({
+              text: { type: "plain_text", text: e.emoji },
+              value: e.emoji,
+            })),
           ],
-          initial_option: { text: { type: "plain_text", text: "No label" }, value: "none" },
+          initial_option: {
+            text: { type: "plain_text", text: "No label" },
+            value: "none",
+          },
         },
       },
       {
         type: "input",
         block_id: "custom_label_emoji_svc_block",
         label: { type: "plain_text", text: `Override with a custom emoji` },
-        element: { type: "plain_text_input", action_id: "custom_label_emoji_svc", initial_value: "", placeholder: { type: "plain_text", text: "Type a custom emoji to override" } },
+        element: {
+          type: "plain_text_input",
+          action_id: "custom_label_emoji_svc",
+          initial_value: "",
+          placeholder: {
+            type: "plain_text",
+            text: "Type a custom emoji to override",
+          },
+        },
         dispatch_action: true,
         optional: true,
       },
@@ -1951,19 +2110,36 @@ app.view("single_value_column_select", async ({ ack, view, body, client }) => {
       {
         type: "section",
         block_id: `low_emoji_block_svc_${Date.now()}`,
-        text: { type: "mrkdwn", text: `Low value emoji recommendation for ${valueCol}` },
+        text: {
+          type: "mrkdwn",
+          text: `Low value emoji recommendation for ${valueCol}`,
+        },
         accessory: {
           type: "static_select",
           action_id: "low_emoji_svc",
-          options: valueEmojiGroups.low.map((e) => ({ text: { type: "plain_text", text: e.emoji }, value: e.emoji })),
-          initial_option: { text: { type: "plain_text", text: lowEmoji }, value: lowEmoji },
+          options: valueEmojiGroups.low.map((e) => ({
+            text: { type: "plain_text", text: e.emoji },
+            value: e.emoji,
+          })),
+          initial_option: {
+            text: { type: "plain_text", text: lowEmoji },
+            value: lowEmoji,
+          },
         },
       },
       {
         type: "input",
         block_id: "custom_low_emoji_svc_block",
         label: { type: "plain_text", text: `Override with a custom emoji` },
-        element: { type: "plain_text_input", action_id: "custom_low_emoji_svc", initial_value: "", placeholder: { type: "plain_text", text: "Type a custom emoji to override" } },
+        element: {
+          type: "plain_text_input",
+          action_id: "custom_low_emoji_svc",
+          initial_value: "",
+          placeholder: {
+            type: "plain_text",
+            text: "Type a custom emoji to override",
+          },
+        },
         dispatch_action: true,
         optional: true,
       },
@@ -1972,19 +2148,36 @@ app.view("single_value_column_select", async ({ ack, view, body, client }) => {
       {
         type: "section",
         block_id: `medium_emoji_block_svc_${Date.now()}`,
-        text: { type: "mrkdwn", text: `Medium value emoji recommendation for ${valueCol}` },
+        text: {
+          type: "mrkdwn",
+          text: `Medium value emoji recommendation for ${valueCol}`,
+        },
         accessory: {
           type: "static_select",
           action_id: "medium_emoji_svc",
-          options: valueEmojiGroups.medium.map((e) => ({ text: { type: "plain_text", text: e.emoji }, value: e.emoji })),
-          initial_option: { text: { type: "plain_text", text: mediumEmoji }, value: mediumEmoji },
+          options: valueEmojiGroups.medium.map((e) => ({
+            text: { type: "plain_text", text: e.emoji },
+            value: e.emoji,
+          })),
+          initial_option: {
+            text: { type: "plain_text", text: mediumEmoji },
+            value: mediumEmoji,
+          },
         },
       },
       {
         type: "input",
         block_id: "custom_medium_emoji_svc_block",
         label: { type: "plain_text", text: `Override with a custom emoji` },
-        element: { type: "plain_text_input", action_id: "custom_medium_emoji_svc", initial_value: "", placeholder: { type: "plain_text", text: "Type a custom emoji to override" } },
+        element: {
+          type: "plain_text_input",
+          action_id: "custom_medium_emoji_svc",
+          initial_value: "",
+          placeholder: {
+            type: "plain_text",
+            text: "Type a custom emoji to override",
+          },
+        },
         dispatch_action: true,
         optional: true,
       },
@@ -1993,19 +2186,36 @@ app.view("single_value_column_select", async ({ ack, view, body, client }) => {
       {
         type: "section",
         block_id: `high_emoji_block_svc_${Date.now()}`,
-        text: { type: "mrkdwn", text: `High value emoji recommendation for ${valueCol}` },
+        text: {
+          type: "mrkdwn",
+          text: `High value emoji recommendation for ${valueCol}`,
+        },
         accessory: {
           type: "static_select",
           action_id: "high_emoji_svc",
-          options: valueEmojiGroups.high.map((e) => ({ text: { type: "plain_text", text: e.emoji }, value: e.emoji })),
-          initial_option: { text: { type: "plain_text", text: highEmoji }, value: highEmoji },
+          options: valueEmojiGroups.high.map((e) => ({
+            text: { type: "plain_text", text: e.emoji },
+            value: e.emoji,
+          })),
+          initial_option: {
+            text: { type: "plain_text", text: highEmoji },
+            value: highEmoji,
+          },
         },
       },
       {
         type: "input",
         block_id: "custom_high_emoji_svc_block",
         label: { type: "plain_text", text: `Override with a custom emoji` },
-        element: { type: "plain_text_input", action_id: "custom_high_emoji_svc", initial_value: "", placeholder: { type: "plain_text", text: "Type a custom emoji to override" } },
+        element: {
+          type: "plain_text_input",
+          action_id: "custom_high_emoji_svc",
+          initial_value: "",
+          placeholder: {
+            type: "plain_text",
+            text: "Type a custom emoji to override",
+          },
+        },
         dispatch_action: true,
         optional: true,
       },
@@ -2018,8 +2228,18 @@ app.view("single_value_column_select", async ({ ack, view, body, client }) => {
         accessory: {
           type: "checkboxes",
           action_id: "show_title_checkbox_svc",
-          options: [{ text: { type: "plain_text", text: "Show chart title" }, value: "show" }],
-          initial_options: [{ text: { type: "plain_text", text: "Show chart title" }, value: "show" }],
+          options: [
+            {
+              text: { type: "plain_text", text: "Show chart title" },
+              value: "show",
+            },
+          ],
+          initial_options: [
+            {
+              text: { type: "plain_text", text: "Show chart title" },
+              value: "show",
+            },
+          ],
         },
       },
       {
@@ -2029,7 +2249,12 @@ app.view("single_value_column_select", async ({ ack, view, body, client }) => {
         accessory: {
           type: "checkboxes",
           action_id: "show_legend_svc",
-          options: [{ text: { type: "plain_text", text: "Show legend" }, value: "show" }],
+          options: [
+            {
+              text: { type: "plain_text", text: "Show legend" },
+              value: "show",
+            },
+          ],
         },
       },
       // Preview
@@ -2054,6 +2279,10 @@ app.view("single_value_column_select", async ({ ack, view, body, client }) => {
           valueCol,
           minRange,
           maxRange,
+          labelEmoji: "none",
+          lowEmoji,
+          mediumEmoji,
+          highEmoji,
           preview: updatedPreview,
         }),
         blocks: updatedBlocks,
@@ -2061,7 +2290,6 @@ app.view("single_value_column_select", async ({ ack, view, body, client }) => {
     });
   })();
 });
-
 
 // TREND CHART //
 function generateTrendChartPreview({
@@ -2590,7 +2818,10 @@ app.view("trend_chart_column_select", async ({ ack, view, body, client }) => {
       {
         type: "section",
         block_id: `label_emoji_block_tc_${Date.now()}`,
-        text: { type: "mrkdwn", text: `Emoji recommendation for the label column (${labelCol})` },
+        text: {
+          type: "mrkdwn",
+          text: `Emoji recommendation for the label column (${labelCol})`,
+        },
         accessory: {
           type: "static_select",
           action_id: "label_emoji_tc",
@@ -2618,7 +2849,10 @@ app.view("trend_chart_column_select", async ({ ack, view, body, client }) => {
           type: "plain_text_input",
           action_id: "custom_label_emoji_tc",
           initial_value: "",
-          placeholder: { type: "plain_text", text: "Type a custom emoji to override" },
+          placeholder: {
+            type: "plain_text",
+            text: "Type a custom emoji to override",
+          },
         },
         dispatch_action: true,
         optional: true,
@@ -2629,7 +2863,10 @@ app.view("trend_chart_column_select", async ({ ack, view, body, client }) => {
       {
         type: "section",
         block_id: `low_emoji_block_tc_${Date.now()}`,
-        text: { type: "mrkdwn", text: `Low value emoji recommendation for ${valueCol}` },
+        text: {
+          type: "mrkdwn",
+          text: `Low value emoji recommendation for ${valueCol}`,
+        },
         accessory: {
           type: "static_select",
           action_id: "low_emoji_tc",
@@ -2651,7 +2888,10 @@ app.view("trend_chart_column_select", async ({ ack, view, body, client }) => {
           type: "plain_text_input",
           action_id: "custom_low_emoji_tc",
           initial_value: "",
-          placeholder: { type: "plain_text", text: "Type a custom emoji to override" },
+          placeholder: {
+            type: "plain_text",
+            text: "Type a custom emoji to override",
+          },
         },
         dispatch_action: true,
         optional: true,
@@ -2662,7 +2902,10 @@ app.view("trend_chart_column_select", async ({ ack, view, body, client }) => {
       {
         type: "section",
         block_id: `medium_emoji_block_tc_${Date.now()}`,
-        text: { type: "mrkdwn", text: `Medium value emoji recommendation for ${valueCol}` },
+        text: {
+          type: "mrkdwn",
+          text: `Medium value emoji recommendation for ${valueCol}`,
+        },
         accessory: {
           type: "static_select",
           action_id: "medium_emoji_tc",
@@ -2684,7 +2927,10 @@ app.view("trend_chart_column_select", async ({ ack, view, body, client }) => {
           type: "plain_text_input",
           action_id: "custom_medium_emoji_tc",
           initial_value: "",
-          placeholder: { type: "plain_text", text: "Type a custom emoji to override" },
+          placeholder: {
+            type: "plain_text",
+            text: "Type a custom emoji to override",
+          },
         },
         dispatch_action: true,
         optional: true,
@@ -2695,7 +2941,10 @@ app.view("trend_chart_column_select", async ({ ack, view, body, client }) => {
       {
         type: "section",
         block_id: `high_emoji_block_tc_${Date.now()}`,
-        text: { type: "mrkdwn", text: `High value emoji recommendation for ${valueCol}` },
+        text: {
+          type: "mrkdwn",
+          text: `High value emoji recommendation for ${valueCol}`,
+        },
         accessory: {
           type: "static_select",
           action_id: "high_emoji_tc",
@@ -2717,7 +2966,10 @@ app.view("trend_chart_column_select", async ({ ack, view, body, client }) => {
           type: "plain_text_input",
           action_id: "custom_high_emoji_tc",
           initial_value: "",
-          placeholder: { type: "plain_text", text: "Type a custom emoji to override" },
+          placeholder: {
+            type: "plain_text",
+            text: "Type a custom emoji to override",
+          },
         },
         dispatch_action: true,
         optional: true,
@@ -2789,7 +3041,6 @@ app.view("trend_chart_column_select", async ({ ack, view, body, client }) => {
     });
   })();
 });
-
 
 // PROPORTION CHART //
 function generateProportionChartPreview({
@@ -2939,7 +3190,6 @@ proportionChartEmojiActions.forEach((actionId) => {
 
       view.blocks = blocks;
       customValue = undefined; // ignore custom input if dropdown triggered
-
     } else if (inputMatch) {
       idx = inputMatch[1];
       labelText = private_metadata.labels[idx];
@@ -2973,9 +3223,9 @@ proportionChartEmojiActions.forEach((actionId) => {
 
     const lines = rawTableData.trim().split("\n");
     const headers = lines[0].split(",").map((h) => h.trim());
-    const rows = lines.slice(1).map((line) =>
-      line.split(",").map((cell) => cell.trim())
-    );
+    const rows = lines
+      .slice(1)
+      .map((line) => line.split(",").map((cell) => cell.trim()));
 
     const labelIdx = headers.indexOf(labelCol);
     const agg = {};
@@ -3221,45 +3471,61 @@ app.view(
         {
           type: "divider",
         },
-        ...topFive.map((label, i) => {
-          const recs = getRecEmojiOptions(suggestions, labelCol, "value", label);
+        ...topFive
+          .map((label, i) => {
+            const recs = getRecEmojiOptions(
+              suggestions,
+              labelCol,
+              "value",
+              label
+            );
 
-          return [
-            {
-              type: "section",
-              block_id: `label_emoji_block_${i}`,
-              text: { type: "mrkdwn", text: `Emoji recommendation for ${label}` },
-              accessory: {
-                type: "static_select",
-                action_id: `por_label_emoji_${i}`,
-                options: recs.map((e) => ({
-                  text: { type: "plain_text", text: e.emoji },
-                  value: e.emoji,
-                })),
-                initial_option: {
-                  text: { type: "plain_text", text: realEmojiMap[label] },
-                  value: realEmojiMap[label],
+            return [
+              {
+                type: "section",
+                block_id: `label_emoji_block_${i}`,
+                text: {
+                  type: "mrkdwn",
+                  text: `Emoji recommendation for ${label}`,
+                },
+                accessory: {
+                  type: "static_select",
+                  action_id: `por_label_emoji_${i}`,
+                  options: recs.map((e) => ({
+                    text: { type: "plain_text", text: e.emoji },
+                    value: e.emoji,
+                  })),
+                  initial_option: {
+                    text: { type: "plain_text", text: realEmojiMap[label] },
+                    value: realEmojiMap[label],
+                  },
                 },
               },
-            },
-            {
-              type: "input",
-              block_id: `custom_label_emoji_block_${i}`,
-              label: { type: "plain_text", text: `Override with a custom emoji` },
-              element: {
-                type: "plain_text_input",
-                action_id: `custom_por_label_emoji_${i}`,
-                initial_value: "",
-                placeholder: { type: "plain_text", text: "Type a custom emoji to override" },
+              {
+                type: "input",
+                block_id: `custom_label_emoji_block_${i}`,
+                label: {
+                  type: "plain_text",
+                  text: `Override with a custom emoji`,
+                },
+                element: {
+                  type: "plain_text_input",
+                  action_id: `custom_por_label_emoji_${i}`,
+                  initial_value: "",
+                  placeholder: {
+                    type: "plain_text",
+                    text: "Type a custom emoji to override",
+                  },
+                },
+                dispatch_action: true,
+                optional: true,
               },
-              "dispatch_action": true,
-              optional: true,
-            },
-            {
-              type: "divider",
-            },
-          ];
-        }).flat(),
+              {
+                type: "divider",
+              },
+            ];
+          })
+          .flat(),
         {
           type: "section",
           block_id: "show_title_block_por",
