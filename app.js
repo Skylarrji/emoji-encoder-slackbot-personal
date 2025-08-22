@@ -398,16 +398,6 @@ app.view("emoji_chart_modal", async ({ ack, view, body, client }) => {
   }
 
   const oldMetadata = JSON.parse(view.private_metadata || "{}");
-  const tableData = { headers, rows };
-
-  // recommend emojis asynchronously
-  // process.nextTick(async () => {
-  //   try {
-  //     await recommendEmojis("", tableData, chartTitle);
-  //   } catch (err) {
-  //     console.error("Error generating emoji recommendations:", err);
-  //   }
-  // });
 
   const private_metadata = JSON.stringify({
     ...oldMetadata,
@@ -449,6 +439,7 @@ app.view("emoji_chart_modal", async ({ ack, view, body, client }) => {
               type: "static_select",
               action_id: "label_column",
               options: catOptions,
+              initial_option: catOptions[0],
             },
           },
           {
@@ -462,6 +453,7 @@ app.view("emoji_chart_modal", async ({ ack, view, body, client }) => {
               type: "static_select",
               action_id: "value_column",
               options: quantOptions,
+              initial_option: quantOptions[0],
             },
           },
         ],
@@ -504,6 +496,7 @@ app.view("emoji_chart_modal", async ({ ack, view, body, client }) => {
               type: "static_select",
               action_id: "label_column",
               options: catOptions,
+              initial_option: catOptions[0],
             },
           },
           {
@@ -517,6 +510,7 @@ app.view("emoji_chart_modal", async ({ ack, view, body, client }) => {
               type: "static_select",
               action_id: "value_column",
               options: quantOptions,
+              initial_option: quantOptions[0],
             },
           },
           {
@@ -594,6 +588,7 @@ app.view("emoji_chart_modal", async ({ ack, view, body, client }) => {
               type: "static_select",
               action_id: "label_column",
               options: temporalOptions,
+              initial_option: temporalOptions[0],
             },
           },
           {
@@ -607,6 +602,7 @@ app.view("emoji_chart_modal", async ({ ack, view, body, client }) => {
               type: "static_select",
               action_id: "value_column",
               options: quantOptions,
+              initial_option: quantOptions[0],
             },
           },
           {
@@ -688,6 +684,7 @@ app.view("emoji_chart_modal", async ({ ack, view, body, client }) => {
               type: "static_select",
               action_id: "value_column",
               options: catOptions,
+              initial_option: catOptions[0],
             },
           },
           {
@@ -704,6 +701,8 @@ app.view("emoji_chart_modal", async ({ ack, view, body, client }) => {
                 quantOptions.length > 0
                   ? [...quantOptions, noneOption]
                   : [noneOption],
+              initial_option:
+                quantOptions.length > 0 ? quantOptions[0] : [noneOption],
             },
           },
           {
@@ -732,58 +731,6 @@ app.view("emoji_chart_modal", async ({ ack, view, body, client }) => {
     });
     return;
   }
-
-  // fallback option
-  const options = headers.map((col) => ({
-    text: { type: "plain_text", text: col },
-    value: col.toLowerCase().replace(/ /g, "_"),
-  }));
-  await ack({
-    response_action: "push",
-    view: {
-      type: "modal",
-      callback_id: "emoji_chart_finalize",
-      title: { type: "plain_text", text: "Create Emoji Chart", emoji: true },
-      submit: { type: "plain_text", text: "Generate", emoji: true },
-      close: { type: "plain_text", text: "Back", emoji: true },
-      blocks: [
-        {
-          type: "input",
-          block_id: "label_column_block",
-          label: { type: "plain_text", text: "Label Columns" },
-          element: {
-            type: "multi_static_select",
-            action_id: "label_columns",
-            placeholder: { type: "plain_text", text: "Select 1 or more" },
-            options,
-          },
-        },
-        {
-          type: "input",
-          block_id: "value_column_block",
-          label: { type: "plain_text", text: "Value Columns" },
-          element: {
-            type: "multi_static_select",
-            action_id: "value_columns",
-            placeholder: { type: "plain_text", text: "Select 1 or more" },
-            options,
-          },
-        },
-        {
-          type: "input",
-          optional: true,
-          block_id: "group_by_block",
-          label: { type: "plain_text", text: "Group by" },
-          element: {
-            type: "static_select",
-            action_id: "group_by",
-            placeholder: { type: "plain_text", text: "Select a column" },
-            options,
-          },
-        },
-      ],
-    },
-  });
 });
 
 // helper to safely delete files
