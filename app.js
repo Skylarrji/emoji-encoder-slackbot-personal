@@ -1884,9 +1884,9 @@ app.view("single_value_column_select", async ({ ack, view, body, client }) => {
   const placeholderPreview = generateSingleValueChartPreview({
     agg,
     labelEmoji: "none",
-    lowEmoji: "❓",
-    mediumEmoji: "❓",
-    highEmoji: "❓",
+    lowEmoji: "🟥",
+    mediumEmoji: "🟧",
+    highEmoji: "🟩",
     showLabelEmoji: false,
     showLegend: false,
     minRange,
@@ -1937,7 +1937,7 @@ app.view("single_value_column_select", async ({ ack, view, body, client }) => {
           block_id: "low_emoji_block_svc",
           text: {
             type: "mrkdwn",
-            text: `*Low value emoji for ${valueCol}*: ❓`,
+            text: `*Low value emoji for ${valueCol}*: 🟥`,
           },
         },
         {
@@ -1945,7 +1945,7 @@ app.view("single_value_column_select", async ({ ack, view, body, client }) => {
           block_id: "medium_emoji_block_svc",
           text: {
             type: "mrkdwn",
-            text: `*Medium value emoji for ${valueCol}*: ❓`,
+            text: `*Medium value emoji for ${valueCol}*: 🟧`,
           },
         },
         {
@@ -1953,7 +1953,7 @@ app.view("single_value_column_select", async ({ ack, view, body, client }) => {
           block_id: "high_emoji_block_svc",
           text: {
             type: "mrkdwn",
-            text: `*High value emoji for ${valueCol}*: ❓`,
+            text: `*High value emoji for ${valueCol}*: 🟩`,
           },
         },
         {
@@ -2637,9 +2637,9 @@ app.view("trend_chart_column_select", async ({ ack, view, body, client }) => {
     entries,
     labelEmoji: "none",
     labelCol,
-    lowEmoji: "❓",
-    mediumEmoji: "❓",
-    highEmoji: "❓",
+    lowEmoji: "🟥",
+    mediumEmoji: "🟧",
+    highEmoji: "🟩",
     showLabelEmoji: false,
     showLegend: false,
     minRange,
@@ -2690,7 +2690,7 @@ app.view("trend_chart_column_select", async ({ ack, view, body, client }) => {
           block_id: "low_emoji_block_tc",
           text: {
             type: "mrkdwn",
-            text: `*Low value emoji for ${valueCol}:* ❓`,
+            text: `*Low value emoji for ${valueCol}:* 🟥`,
           },
         },
         {
@@ -2698,7 +2698,7 @@ app.view("trend_chart_column_select", async ({ ack, view, body, client }) => {
           block_id: "medium_emoji_block_tc",
           text: {
             type: "mrkdwn",
-            text: `*Medium value emoji for ${valueCol}:* ❓`,
+            text: `*Medium value emoji for ${valueCol}:* 🟧`,
           },
         },
         {
@@ -2706,7 +2706,7 @@ app.view("trend_chart_column_select", async ({ ack, view, body, client }) => {
           block_id: "high_emoji_block_tc",
           text: {
             type: "mrkdwn",
-            text: `*High value emoji for ${valueCol}:* ❓`,
+            text: `*High value emoji for ${valueCol}:* 🟩`,
           },
         },
         {
