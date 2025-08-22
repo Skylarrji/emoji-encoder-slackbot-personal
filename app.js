@@ -702,7 +702,7 @@ app.view("emoji_chart_modal", async ({ ack, view, body, client }) => {
                   ? [...quantOptions, noneOption]
                   : [noneOption],
               initial_option:
-                quantOptions.length > 0 ? quantOptions[0] : [noneOption],
+                quantOptions.length > 0 ? quantOptions[0] : noneOption,
             },
           },
           {
