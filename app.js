@@ -3077,9 +3077,12 @@ function generateProportionChartPreview({
 const proportionChartEmojiActions = [
   "show_legend_por",
   "show_title_checkbox_por",
+  "por_label_emoji_other",
+  "custom_por_label_emoji_other",
   ...Array.from({ length: 5 }, (_, i) => `por_label_emoji_${i}`),
   ...Array.from({ length: 5 }, (_, i) => `custom_por_label_emoji_${i}`),
 ];
+
 proportionChartEmojiActions.forEach((actionId) => {
   app.action(actionId, async ({ body, action, ack, client }) => {
     const view = body.view;
@@ -3090,6 +3093,7 @@ proportionChartEmojiActions.forEach((actionId) => {
     const labelCol = private_metadata.labelCol;
     const chartTitle = private_metadata.chartTitle || "";
     const emojiMap = { ...private_metadata.emojiMap };
+    const otherEmoji = private_metadata.otherEmoji || "📦";
     const freqCol = private_metadata.freqCol || "none";
     const triggeredId = action.action_id;
     const blockId = action.block_id;
@@ -3098,9 +3102,11 @@ proportionChartEmojiActions.forEach((actionId) => {
 
     const inputMatch = triggeredId.match(/^custom_por_label_emoji_(\d+)$/);
     const dropdownMatch = triggeredId.match(/^por_label_emoji_(\d+)$/);
+    const isOtherInput = triggeredId === "custom_por_label_emoji_other";
+    const isOtherDropdown = triggeredId === "por_label_emoji_other";
 
     // --- validate custom emoji input ---
-    if (inputMatch) {
+    if (inputMatch || isOtherInput) {
       const customValueRaw = action.value?.trim() || "";
       const isValid = customValueRaw && singleEmojiRegex.test(customValueRaw);
       if (!isValid) {
@@ -3116,49 +3122,63 @@ proportionChartEmojiActions.forEach((actionId) => {
 
     await ack();
 
+    // --- Dropdowns clear their paired custom inputs ---
     if (dropdownMatch) {
       idx = dropdownMatch[1];
       labelText = private_metadata.labels[idx];
       dropdownValue = action.selected_option?.value;
 
-      // --- clear paired custom input by regenerating block_id ---
       const blocks = [...view.blocks];
       const customBlockIdx = blocks.findIndex((b) =>
         b.block_id.startsWith(`custom_label_emoji_block_${idx}`)
       );
       if (customBlockIdx !== -1) {
         blocks[customBlockIdx] = {
-          type: "input",
+          ...blocks[customBlockIdx],
           block_id: `custom_label_emoji_block_${idx}_reset_${Date.now()}`,
           element: {
-            type: "plain_text_input",
-            action_id: `custom_por_label_emoji_${idx}`,
+            ...blocks[customBlockIdx].element,
             initial_value: "", // force reset
-            placeholder: {
-              type: "plain_text",
-              text: "Type a custom emoji to override",
-            },
           },
-          label: {
-            type: "plain_text",
-            text: `Override with a custom emoji for ${labelText}`,
-          },
-          dispatch_action: true,
-          optional: true,
         };
       }
-
       view.blocks = blocks;
-      customValue = undefined; // ignore custom input if dropdown triggered
+      customValue = undefined;
     } else if (inputMatch) {
       idx = inputMatch[1];
       labelText = private_metadata.labels[idx];
       customValue = action.value?.trim();
 
-      // also peek at dropdown (optional fallback)
       const dropdownBlock = state[`label_emoji_block_${idx}`];
       dropdownValue =
         dropdownBlock?.[`por_label_emoji_${idx}`]?.selected_option?.value;
+    } else if (isOtherDropdown) {
+      labelText = "other";
+      dropdownValue = action.selected_option?.value;
+
+      const blocks = [...view.blocks];
+      const customBlockIdx = blocks.findIndex((b) =>
+        b.block_id.startsWith("custom_label_emoji_block_other")
+      );
+      if (customBlockIdx !== -1) {
+        blocks[customBlockIdx] = {
+          ...blocks[customBlockIdx],
+          block_id: `custom_label_emoji_block_other_reset_${Date.now()}`,
+          element: {
+            ...blocks[customBlockIdx].element,
+            initial_value: "", // clear custom override
+          },
+        };
+      }
+      view.blocks = blocks;
+      customValue = undefined;
+    } else if (isOtherInput) {
+      labelText = "other";
+      customValue = action.value?.trim();
+
+      const dropdownBlock = state["label_emoji_block_other"];
+      dropdownValue =
+        dropdownBlock?.por_label_emoji_other?.selected_option?.value;
     }
 
     // --- update emoji map ---
@@ -3170,7 +3190,7 @@ proportionChartEmojiActions.forEach((actionId) => {
       }
     }
 
-    // --- preview rebuild ---
+    // --- regenerate preview (unchanged logic) ---
     const showLegend =
       state.show_legend_block_por?.show_legend_por?.selected_options?.some(
         (opt) => opt.value === "show"
@@ -3218,6 +3238,7 @@ proportionChartEmojiActions.forEach((actionId) => {
         Number(
           state.num_emojis_per_line_block?.num_emojis_per_line_input?.value
         ) || 10,
+      defaultEmoji: emojiMap["other"] || otherEmoji,
     });
 
     const blocks = [...view.blocks];
@@ -3235,6 +3256,7 @@ proportionChartEmojiActions.forEach((actionId) => {
       ...private_metadata,
       emojiMap,
       preview: formattedPreview,
+      otherEmoji: emojiMap["other"] || otherEmoji,
     });
 
     await client.views.update({
@@ -3312,6 +3334,7 @@ app.view(
       showTitle,
       showLegend,
       numEmojisPerLine,
+      defaultEmoji: "⬜️",
     });
 
     const new_private_metadata = JSON.stringify({
@@ -3361,6 +3384,14 @@ app.view(
           })),
           {
             type: "section",
+            block_id: `label_emoji_block_other_por`,
+            text: {
+              type: "mrkdwn",
+              text: `Other: ❓`,
+            },
+          },
+          {
+            type: "section",
             block_id: "show_title_block_por",
             text: {
               type: "mrkdwn",
@@ -3372,7 +3403,7 @@ app.view(
             block_id: "show_legend_block_por",
             text: {
               type: "mrkdwn",
-              text: "*Show legend?*\n[ ] Show legend",
+              text: "*Show legend?*\n[x] Show legend",
             },
           },
           {
@@ -3417,6 +3448,7 @@ app.view(
         showTitle,
         showLegend,
         numEmojisPerLine,
+        defaultEmoji: "⬜️",
       });
 
       const updatedBlocks = [
@@ -3486,6 +3518,56 @@ app.view(
             ];
           })
           .flat(),
+        {
+          type: "section",
+          block_id: `label_emoji_block_other`,
+          text: {
+            type: "mrkdwn",
+            text: `Emoji recommendation for Other`,
+          },
+          accessory: {
+            type: "static_select",
+            action_id: `por_label_emoji_other`,
+            options: [
+              { emoji: "⬜️" }, // options for the "Other" category are hardcoded for now
+              { emoji: "⬛️" },
+              { emoji: "⚪" },
+              { emoji: "⚫" },
+              { emoji: "✨" },
+              { emoji: "📦" },
+              { emoji: "❔" },
+            ].map((e) => ({
+              text: { type: "plain_text", text: e.emoji },
+              value: e.emoji,
+            })),
+            initial_option: {
+              text: { type: "plain_text", text: "⬜️" },
+              value: "⬜️",
+            },
+          },
+        },
+        {
+          type: "input",
+          block_id: `custom_label_emoji_block_other`,
+          label: {
+            type: "plain_text",
+            text: `Override with a custom emoji`,
+          },
+          element: {
+            type: "plain_text_input",
+            action_id: `custom_por_label_emoji_other`,
+            initial_value: "",
+            placeholder: {
+              type: "plain_text",
+              text: "Type a custom emoji to override",
+            },
+          },
+          dispatch_action: true,
+          optional: true,
+        },
+        {
+          type: "divider",
+        },
         {
           type: "section",
           block_id: "show_title_block_por",
@@ -3558,6 +3640,7 @@ app.view(
             emojiMap: realEmojiMap,
             freqCol,
             labels: topFive,
+            otherEmoji: "⬜️", // default for "Other" category
           }),
           blocks: updatedBlocks,
         },
