@@ -2373,10 +2373,10 @@ trendChartEmojiActions.forEach((actionId) => {
     const blockId = action.block_id;
 
     // defaults
-    let labelEmoji = "none";
-    let lowEmoji = "📉";
-    let mediumEmoji = "😐";
-    let highEmoji = "📈";
+    let labelEmoji = private_metadata.labelEmoji || "none";
+    let lowEmoji = private_metadata.lowEmoji || "📉";
+    let mediumEmoji = private_metadata.mediumEmoji || "😐";
+    let highEmoji = private_metadata.highEmoji || "📈";
 
     let dropdownValue, customValue;
 
@@ -2585,6 +2585,10 @@ trendChartEmojiActions.forEach((actionId) => {
     const new_private_metadata = JSON.stringify({
       ...private_metadata,
       preview,
+      labelEmoji,
+      lowEmoji,
+      mediumEmoji,
+      highEmoji,
     });
 
     await client.views.update({
@@ -3034,6 +3038,10 @@ app.view("trend_chart_column_select", async ({ ack, view, body, client }) => {
           valueCol,
           minRange,
           maxRange,
+          labelEmoji: "none",
+          lowEmoji,
+          mediumEmoji,
+          highEmoji,
           preview: updatedPreview,
         }),
         blocks: updatedBlocks,
