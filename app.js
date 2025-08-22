@@ -77,27 +77,32 @@ app.command("/emojichart", async ({ command, ack, body, client }) => {
             },
           },
           {
-            type: "section",
+            type: "input",
             block_id: "insight_block",
-            text: {
-              type: "mrkdwn",
-              text: "*What insight do you want to communicate?*",
+            label: {
+              type: "plain_text",
+              text: "What insight do you want to generate?",
             },
-            accessory: {
-              type: "radio_buttons",
+            element: {
+              type: "static_select",
               action_id: "insight_input",
+              placeholder: { type: "plain_text", text: "Select an insight" },
               options: [
                 {
                   text: { type: "plain_text", text: "Comparison" },
                   value: "comparison",
                 },
-                { text: { type: "plain_text", text: "Trend" }, value: "trend" },
+                {
+                  text: { type: "plain_text", text: "Trend" },
+                  value: "trend",
+                },
                 {
                   text: { type: "plain_text", text: "Proportion" },
                   value: "proportion",
                 },
               ],
             },
+            dispatch_action: true,
           },
         ],
       },
@@ -118,13 +123,13 @@ app.action("insight_input", async ({ body, ack, client }) => {
   // If 'comparison' is selected, add chart type block
   if (selected === "comparison") {
     blocks.push({
-      type: "section",
+      type: "input",
       block_id: "chart_type_block",
-      text: {
-        type: "mrkdwn",
-        text: "*What type of chart do you want to visualize?*",
+      label: {
+        type: "plain_text",
+        text: "What type of chart do you want to visualize?",
       },
-      accessory: {
+      element: {
         type: "radio_buttons",
         action_id: "chart_type_input",
         options: [
