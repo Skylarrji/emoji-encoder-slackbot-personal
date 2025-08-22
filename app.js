@@ -1,4 +1,4 @@
-import pkg, { ReceiverInconsistentStateError } from "@slack/bolt";
+import pkg from "@slack/bolt";
 const { App } = pkg;
 import stringWidth from "string-width";
 import moment from "moment";
