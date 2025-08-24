@@ -737,7 +737,6 @@ async function callEmojiRecommendation(tableData, tableDescription) {
       tableData.headers.join(","),
       ...tableData.rows.map((row) => row.join(",")),
     ].join("\n");
-
     const response = await axios.post(process.env.EMOJI_API_URL + "/recommend", {
       csv: csvContent,
       top_k: 5
@@ -3572,6 +3571,7 @@ app.view("post_final_message", async ({ ack, body, view, client }) => {
 });
 
 (async () => {
-  await app.start(process.env.PORT || 3000);
-  console.log("⚡️ Emoji Encoder is running!");
+  const port = process.env.PORT || 3000;
+  await app.start(port);
+  console.log(`⚡️ Emoji Encoder is running on port ${port}`);
 })();
