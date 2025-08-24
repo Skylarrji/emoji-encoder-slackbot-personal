@@ -5,6 +5,7 @@ import moment from "moment";
 import "dotenv/config";
 import emojiRegex from "emoji-regex";
 import axios from "axios";
+import express from "express";
 
 const app = new App({
   token: process.env.SLACK_BOT_TOKEN,
@@ -3570,7 +3571,20 @@ app.view("post_final_message", async ({ ack, body, view, client }) => {
   }
 });
 
+// Start Bolt app (Slackbot in socket mode)
 (async () => {
-  await app.start(process.env.PORT || 3000);
+  await app.start();
   console.log("⚡️ Emoji Encoder is running!");
 })();
+
+// Express for Render port binding
+const expressApp = express();
+expressApp.get("/", (req, res) => {
+  res.send("Emoji Encoder Slackbot is running on express!");
+});
+
+const port = process.env.PORT || 3000;
+expressApp.listen(port, () => {
+  console.log(`Express server listening on port ${port}`);
+});
+
