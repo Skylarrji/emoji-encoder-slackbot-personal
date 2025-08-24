@@ -3571,7 +3571,6 @@ app.view("post_final_message", async ({ ack, body, view, client }) => {
 });
 
 (async () => {
-  const port = process.env.PORT;
-  await app.start(port);
-  console.log(`⚡️ Emoji Encoder is running on port ${port}`);
+  await app.start(process.env.PORT || 3000);
+  console.log("⚡️ Emoji Encoder is running!");
 })();
