@@ -113,7 +113,7 @@ app.action("insight_input", async ({ body, ack, client }) => {
   const selected = body.actions[0].selected_option.value;
   // Copy current blocks except chart type block if present
   let blocks = body.view.blocks.filter(
-    (b) => b.block_id !== "chart_type_block"
+    (b) => b.block_id !== "chart_type_block",
   );
   // If 'comparison' is selected, add chart type block
   if (selected === "comparison") {
@@ -156,14 +156,91 @@ app.action("insight_input", async ({ body, ack, client }) => {
   });
 });
 
+// ---------------------------------------------------------------------------
+// Shared helpers
+// ---------------------------------------------------------------------------
+
+// Parse pasted CSV text into a header array and trimmed row arrays.
 const parseTableData = (rawTableData) => {
-  const lines = rawTableData.trim().split("\n");
+  const lines = (rawTableData || "").trim().split("\n");
   if (lines.length < 2) return { headers: [], rows: [] };
   const headers = lines[0].split(",").map((h) => h.trim());
   const rows = lines
     .slice(1)
     .map((line) => line.split(",").map((cell) => cell.trim()));
   return { headers, rows };
+};
+
+// Sum a numeric column grouped by a label column, skipping non-numeric values.
+const aggregateSum = (rows, labelIdx, valueIdx) => {
+  const agg = {};
+  rows.forEach((row) => {
+    const label = row[labelIdx];
+    const value = Number(row[valueIdx]);
+    if (!isNaN(value)) agg[label] = (agg[label] || 0) + value;
+  });
+  return agg;
+};
+
+// Count occurrences of each (lowercased) label. When freqIdx >= 0, sum that
+// numeric column instead of counting rows. Used by the proportion chart.
+const aggregateFrequency = (rows, labelIdx, freqIdx) => {
+  const agg = {};
+  rows.forEach((row) => {
+    const key = (row[labelIdx]?.trim() || "unknown").toLowerCase();
+    if (freqIdx >= 0) {
+      const freqVal = Number(row[freqIdx]?.trim());
+      if (!isNaN(freqVal)) agg[key] = (agg[key] || 0) + freqVal;
+    } else {
+      agg[key] = (agg[key] || 0) + 1;
+    }
+  });
+  return agg;
+};
+
+// Build a Slack static_select option whose label and value are the same string.
+const toOption = (text) => ({
+  text: { type: "plain_text", text },
+  value: text,
+});
+
+// Map a list of strings to Slack static_select options.
+const toOptions = (values) => values.map(toOption);
+
+// Read whether a "show" checkbox is currently selected in the view state.
+const readCheckbox = (state, blockId, actionId, defaultValue = false) =>
+  state[blockId]?.[actionId]?.selected_options?.some(
+    (opt) => opt.value === "show",
+  ) ?? defaultValue;
+
+// Build the "Override with a custom emoji" text input block used in every chart.
+const makeCustomEmojiInput = (actionId, blockId) => ({
+  type: "input",
+  block_id: blockId,
+  label: { type: "plain_text", text: `Override with a custom emoji` },
+  element: {
+    type: "plain_text_input",
+    action_id: actionId,
+    initial_value: "",
+    placeholder: {
+      type: "plain_text",
+      text: "Type a custom emoji to override",
+    },
+  },
+  dispatch_action: true,
+  optional: true,
+});
+
+// Replace a custom-emoji input block (matched by prefix) with a fresh, empty one
+// so its previous override value is cleared. Mutates the given blocks array.
+const resetCustomEmojiBlock = (blocks, blockIdPrefix, actionId) => {
+  const idx = blocks.findIndex((b) => b.block_id.startsWith(blockIdPrefix));
+  if (idx !== -1) {
+    blocks[idx] = makeCustomEmojiInput(
+      actionId,
+      `${blockIdPrefix}_reset_${Date.now()}`,
+    );
+  }
 };
 
 const getCategoricalColumns = (headers, rows) => {
@@ -403,16 +480,8 @@ app.view("emoji_chart_modal", async ({ ack, view, body, client }) => {
 
   if (chartType === "bar_chart") {
     // Only show the two questions for bar chart
-    const categorical = getCategoricalColumns(headers, rows);
-    const quantitative = getQuantitativeColumns(headers, rows);
-    const catOptions = categorical.map((col) => ({
-      text: { type: "plain_text", text: col },
-      value: col,
-    }));
-    const quantOptions = quantitative.map((col) => ({
-      text: { type: "plain_text", text: col },
-      value: col,
-    }));
+    const catOptions = toOptions(getCategoricalColumns(headers, rows));
+    const quantOptions = toOptions(getQuantitativeColumns(headers, rows));
     await ack({
       response_action: "push",
       view: {
@@ -458,17 +527,8 @@ app.view("emoji_chart_modal", async ({ ack, view, body, client }) => {
   }
 
   if (chartType === "single_value_chart") {
-    const categorical = getCategoricalColumns(headers, rows);
-    const quantitative = getQuantitativeColumns(headers, rows);
-
-    const catOptions = categorical.map((col) => ({
-      text: { type: "plain_text", text: col },
-      value: col,
-    }));
-    const quantOptions = quantitative.map((col) => ({
-      text: { type: "plain_text", text: col },
-      value: col,
-    }));
+    const catOptions = toOptions(getCategoricalColumns(headers, rows));
+    const quantOptions = toOptions(getQuantitativeColumns(headers, rows));
 
     await ack({
       response_action: "push",
@@ -549,18 +609,8 @@ app.view("emoji_chart_modal", async ({ ack, view, body, client }) => {
   }
 
   if (insight === "trend") {
-    const quantitative = getQuantitativeColumns(headers, rows);
-    const temporal = getTemporalColumns(headers, rows);
-
-    const quantOptions = quantitative.map((col) => ({
-      text: { type: "plain_text", text: col },
-      value: col,
-    }));
-
-    const temporalOptions = temporal.map((col) => ({
-      text: { type: "plain_text", text: col },
-      value: col,
-    }));
+    const quantOptions = toOptions(getQuantitativeColumns(headers, rows));
+    const temporalOptions = toOptions(getTemporalColumns(headers, rows));
 
     await ack({
       response_action: "push",
@@ -641,17 +691,8 @@ app.view("emoji_chart_modal", async ({ ack, view, body, client }) => {
   }
 
   if (insight === "proportion") {
-    const categorical = getGeneralCategoricalColumns(headers, rows);
-    const quantitative = getQuantitativeColumns(headers, rows);
-    const catOptions = categorical.map((col) => ({
-      text: { type: "plain_text", text: col },
-      value: col,
-    }));
-
-    const quantOptions = quantitative.map((col) => ({
-      text: { type: "plain_text", text: col },
-      value: col,
-    }));
+    const catOptions = toOptions(getGeneralCategoricalColumns(headers, rows));
+    const quantOptions = toOptions(getQuantitativeColumns(headers, rows));
 
     const noneOption = {
       text: { type: "plain_text", text: "None (Use Emoji Column)" },
@@ -738,10 +779,13 @@ async function callEmojiRecommendation(tableData, tableDescription) {
       tableData.headers.join(","),
       ...tableData.rows.map((row) => row.join(",")),
     ].join("\n");
-    const response = await axios.post(process.env.EMOJI_API_URL + "/recommend", {
-      csv: csvContent,
-      top_k: 5
-    });
+    const response = await axios.post(
+      process.env.EMOJI_API_URL + "/recommend",
+      {
+        csv: csvContent,
+        top_k: 5,
+      },
+    );
     return response.data;
   } catch (err) {
     console.error("Emoji API error:", err);
@@ -775,7 +819,7 @@ async function recommendEmojis(tableData = null, tableDescription = null) {
     try {
       const recommendations = await callEmojiRecommendation(
         tableData,
-        tableDescription
+        tableDescription,
       );
       // console.log("Emoji recommendations:", JSON.stringify(recommendations));
       if (
@@ -790,7 +834,7 @@ async function recommendEmojis(tableData = null, tableDescription = null) {
     } catch (err) {
       console.error(
         "Failed to get emoji recommendations from Python backend:",
-        err
+        err,
       );
       return [];
     } finally {
@@ -862,7 +906,7 @@ function generateBarChartPreview({
       const labelPart =
         showLabelEmoji && labelEmoji ? `${labelEmoji} ${label}` : label;
       return stringWidth(labelPart);
-    })
+    }),
   );
 
   let preview = sorted
@@ -944,28 +988,11 @@ barChartEmojiActions.forEach((actionId) => {
     if (triggeredId === "label_emoji_bar") {
       dropdownValue = action.selected_option?.value;
       labelEmoji = dropdownValue;
-
-      const customBlockIdx = blocks.findIndex((b) =>
-        b.block_id.startsWith("custom_label_emoji_block_bar")
+      resetCustomEmojiBlock(
+        blocks,
+        "custom_label_emoji_block_bar",
+        "custom_label_emoji_bar",
       );
-      if (customBlockIdx !== -1) {
-        blocks[customBlockIdx] = {
-          type: "input",
-          block_id: `custom_label_emoji_block_bar_reset_${Date.now()}`,
-          element: {
-            type: "plain_text_input",
-            action_id: "custom_label_emoji_bar",
-            initial_value: "",
-            placeholder: {
-              type: "plain_text",
-              text: "Type a custom emoji to override",
-            },
-          },
-          label: { type: "plain_text", text: `Override with a custom emoji` },
-          dispatch_action: true,
-          optional: true,
-        };
-      }
     } else if (triggeredId === "custom_label_emoji_bar") {
       customValue = action.value?.trim();
       if (customValue) labelEmoji = customValue;
@@ -974,65 +1001,40 @@ barChartEmojiActions.forEach((actionId) => {
     if (triggeredId === "value_emoji_bar") {
       dropdownValue = action.selected_option?.value;
       valueEmoji = dropdownValue;
-
-      const customBlockIdx = blocks.findIndex((b) =>
-        b.block_id.startsWith("custom_value_emoji_block_bar")
+      resetCustomEmojiBlock(
+        blocks,
+        "custom_value_emoji_block_bar",
+        "custom_value_emoji_bar",
       );
-      if (customBlockIdx !== -1) {
-        blocks[customBlockIdx] = {
-          type: "input",
-          block_id: `custom_value_emoji_block_bar_reset_${Date.now()}`,
-          element: {
-            type: "plain_text_input",
-            action_id: "custom_value_emoji_bar",
-            initial_value: "",
-            placeholder: {
-              type: "plain_text",
-              text: "Type a custom emoji to override",
-            },
-          },
-          label: { type: "plain_text", text: `Override with a custom emoji` },
-          dispatch_action: true,
-          optional: true,
-        };
-      }
     } else if (triggeredId === "custom_value_emoji_bar") {
       customValue = action.value?.trim();
       if (customValue) valueEmoji = customValue;
     }
 
-    const showLegend =
-      state.show_legend_block_bar?.show_legend_bar?.selected_options?.some(
-        (opt) => opt.value === "show"
-      ) || false;
-
-    const showTitle =
-      state.show_title_block_bar?.show_title_checkbox_bar?.selected_options?.some(
-        (opt) => opt.value === "show"
-      ) ?? true;
-
-    const showEmojiAtEnd =
-      state.show_end_emoji_block_bar?.show_end_emoji_checkbox_bar?.selected_options?.some(
-        (opt) => opt.value === "show"
-      ) || false;
+    const showLegend = readCheckbox(
+      state,
+      "show_legend_block_bar",
+      "show_legend_bar",
+    );
+    const showTitle = readCheckbox(
+      state,
+      "show_title_block_bar",
+      "show_title_checkbox_bar",
+      true,
+    );
+    const showEmojiAtEnd = readCheckbox(
+      state,
+      "show_end_emoji_block_bar",
+      "show_end_emoji_checkbox_bar",
+    );
 
     const showLabelEmoji = labelEmoji !== "none";
 
     // --- parse and aggregate ---
-    const lines = rawTableData.trim().split("\n");
-    const headers = lines[0].split(",").map((h) => h.trim());
-    const rows = lines
-      .slice(1)
-      .map((line) => line.split(",").map((cell) => cell.trim()));
+    const { headers, rows } = parseTableData(rawTableData);
     const labelIdx = headers.indexOf(labelCol);
     const valueIdx = headers.indexOf(valueCol);
-
-    const agg = {};
-    rows.forEach((row) => {
-      const label = row[labelIdx];
-      const value = Number(row[valueIdx]);
-      if (!isNaN(value)) agg[label] = (agg[label] || 0) + value;
-    });
+    const agg = aggregateSum(rows, labelIdx, valueIdx);
 
     // --- build preview ---
     const preview = generateBarChartPreview({
@@ -1049,7 +1051,7 @@ barChartEmojiActions.forEach((actionId) => {
     });
 
     const previewIdx = blocks.findIndex(
-      (b) => b.block_id === "preview_block_bar"
+      (b) => b.block_id === "preview_block_bar",
     );
     if (previewIdx !== -1) {
       blocks[previewIdx] = {
@@ -1092,24 +1094,12 @@ app.view("bar_chart_column_select", async ({ ack, view, body, client }) => {
     view.state.values.value_column_block.value_column.selected_option.value;
 
   // parse CSV
-  const lines = rawTableData.trim().split("\n");
-  const headers = lines[0].split(",").map((h) => h.trim());
-  const rows = lines
-    .slice(1)
-    .map((line) => line.split(",").map((c) => c.trim()));
-
+  const { headers, rows } = parseTableData(rawTableData);
   const labelIdx = headers.indexOf(labelCol);
   const valueIdx = headers.indexOf(valueCol);
 
   // aggregate values
-  const agg = {};
-  rows.forEach((row) => {
-    const label = row[labelIdx];
-    const value = Number(row[valueIdx]);
-    if (!isNaN(value)) {
-      agg[label] = (agg[label] || 0) + value;
-    }
-  });
+  const agg = aggregateSum(rows, labelIdx, valueIdx);
 
   // placeholder preview
   const placeholderPreview = generateBarChartPreview({
@@ -1203,12 +1193,12 @@ app.view("bar_chart_column_select", async ({ ack, view, body, client }) => {
     const labelRecs = getRecEmojiOptions(
       recommendations,
       labelCol,
-      "column_name"
+      "column_name",
     );
     const valueRecs = getRecEmojiOptions(
       recommendations,
       valueCol,
-      "column_name"
+      "column_name",
     );
 
     const labelEmoji = "none";
@@ -1251,22 +1241,10 @@ app.view("bar_chart_column_select", async ({ ack, view, body, client }) => {
           },
         },
       },
-      {
-        type: "input",
-        block_id: "custom_label_emoji_block_bar",
-        label: { type: "plain_text", text: `Override with a custom emoji` },
-        element: {
-          type: "plain_text_input",
-          action_id: "custom_label_emoji_bar",
-          initial_value: "",
-          placeholder: {
-            type: "plain_text",
-            text: "Type a custom emoji to override",
-          },
-        },
-        dispatch_action: true,
-        optional: true,
-      },
+      makeCustomEmojiInput(
+        "custom_label_emoji_bar",
+        "custom_label_emoji_block_bar",
+      ),
       { type: "divider" },
       // Value emoji
       {
@@ -1295,22 +1273,10 @@ app.view("bar_chart_column_select", async ({ ack, view, body, client }) => {
               : { text: { type: "plain_text", text: "❓" }, value: "❓" },
         },
       },
-      {
-        type: "input",
-        block_id: "custom_value_emoji_block_bar",
-        label: { type: "plain_text", text: `Override with a custom emoji` },
-        element: {
-          type: "plain_text_input",
-          action_id: "custom_value_emoji_bar",
-          initial_value: "",
-          placeholder: {
-            type: "plain_text",
-            text: "Type a custom emoji to override",
-          },
-        },
-        dispatch_action: true,
-        optional: true,
-      },
+      makeCustomEmojiInput(
+        "custom_value_emoji_bar",
+        "custom_value_emoji_block_bar",
+      ),
       { type: "divider" },
       // Show options
       {
@@ -1437,7 +1403,7 @@ function generateSingleValueChartPreview({
       const labelPart =
         showLabelEmoji && labelEmoji ? `${labelEmoji} ${label}` : label;
       return stringWidth(labelPart);
-    })
+    }),
   );
 
   let preview = entries
@@ -1524,28 +1490,11 @@ singleValueChartEmojiActions.forEach((actionId) => {
     if (triggeredId === "label_emoji_svc") {
       dropdownValue = action.selected_option?.value;
       labelEmoji = dropdownValue;
-
-      const customBlockIdx = blocks.findIndex((b) =>
-        b.block_id.startsWith("custom_label_emoji_svc_block")
+      resetCustomEmojiBlock(
+        blocks,
+        "custom_label_emoji_svc_block",
+        "custom_label_emoji_svc",
       );
-      if (customBlockIdx !== -1) {
-        blocks[customBlockIdx] = {
-          type: "input",
-          block_id: `custom_label_emoji_svc_block_reset_${Date.now()}`,
-          element: {
-            type: "plain_text_input",
-            action_id: "custom_label_emoji_svc",
-            initial_value: "",
-            placeholder: {
-              type: "plain_text",
-              text: "Type a custom emoji to override",
-            },
-          },
-          label: { type: "plain_text", text: `Override with a custom emoji` },
-          dispatch_action: true,
-          optional: true,
-        };
-      }
     } else if (triggeredId === "custom_label_emoji_svc") {
       customValue = action.value?.trim();
       if (customValue) labelEmoji = customValue;
@@ -1554,27 +1503,11 @@ singleValueChartEmojiActions.forEach((actionId) => {
     if (triggeredId === "low_emoji_svc") {
       dropdownValue = action.selected_option?.value;
       lowEmoji = dropdownValue;
-      const customBlockIdx = blocks.findIndex((b) =>
-        b.block_id.startsWith("custom_low_emoji_svc_block")
+      resetCustomEmojiBlock(
+        blocks,
+        "custom_low_emoji_svc_block",
+        "custom_low_emoji_svc",
       );
-      if (customBlockIdx !== -1) {
-        blocks[customBlockIdx] = {
-          type: "input",
-          block_id: `custom_low_emoji_svc_block_reset_${Date.now()}`,
-          element: {
-            type: "plain_text_input",
-            action_id: "custom_low_emoji_svc",
-            initial_value: "",
-            placeholder: {
-              type: "plain_text",
-              text: "Type a custom emoji to override",
-            },
-          },
-          label: { type: "plain_text", text: `Override with a custom emoji` },
-          dispatch_action: true,
-          optional: true,
-        };
-      }
     } else if (triggeredId === "custom_low_emoji_svc") {
       customValue = action.value?.trim();
       if (customValue) lowEmoji = customValue;
@@ -1583,27 +1516,11 @@ singleValueChartEmojiActions.forEach((actionId) => {
     if (triggeredId === "medium_emoji_svc") {
       dropdownValue = action.selected_option?.value;
       mediumEmoji = dropdownValue;
-      const customBlockIdx = blocks.findIndex((b) =>
-        b.block_id.startsWith("custom_medium_emoji_svc_block")
+      resetCustomEmojiBlock(
+        blocks,
+        "custom_medium_emoji_svc_block",
+        "custom_medium_emoji_svc",
       );
-      if (customBlockIdx !== -1) {
-        blocks[customBlockIdx] = {
-          type: "input",
-          block_id: `custom_medium_emoji_svc_block_reset_${Date.now()}`,
-          element: {
-            type: "plain_text_input",
-            action_id: "custom_medium_emoji_svc",
-            initial_value: "",
-            placeholder: {
-              type: "plain_text",
-              text: "Type a custom emoji to override",
-            },
-          },
-          label: { type: "plain_text", text: `Override with a custom emoji` },
-          dispatch_action: true,
-          optional: true,
-        };
-      }
     } else if (triggeredId === "custom_medium_emoji_svc") {
       customValue = action.value?.trim();
       if (customValue) mediumEmoji = customValue;
@@ -1612,61 +1529,35 @@ singleValueChartEmojiActions.forEach((actionId) => {
     if (triggeredId === "high_emoji_svc") {
       dropdownValue = action.selected_option?.value;
       highEmoji = dropdownValue;
-      const customBlockIdx = blocks.findIndex((b) =>
-        b.block_id.startsWith("custom_high_emoji_svc_block")
+      resetCustomEmojiBlock(
+        blocks,
+        "custom_high_emoji_svc_block",
+        "custom_high_emoji_svc",
       );
-      if (customBlockIdx !== -1) {
-        blocks[customBlockIdx] = {
-          type: "input",
-          block_id: `custom_high_emoji_svc_block_reset_${Date.now()}`,
-          element: {
-            type: "plain_text_input",
-            action_id: "custom_high_emoji_svc",
-            initial_value: "",
-            placeholder: {
-              type: "plain_text",
-              text: "Type a custom emoji to override",
-            },
-          },
-          label: { type: "plain_text", text: `Override with a custom emoji` },
-          dispatch_action: true,
-          optional: true,
-        };
-      }
     } else if (triggeredId === "custom_high_emoji_svc") {
       customValue = action.value?.trim();
       if (customValue) highEmoji = customValue;
     }
 
-    const showLegend =
-      state.show_legend_block_svc?.show_legend_svc?.selected_options?.some(
-        (opt) => opt.value === "show"
-      ) || false;
-
-    const showTitle =
-      state.show_title_block_svc?.show_title_checkbox_svc?.selected_options?.some(
-        (opt) => opt.value === "show"
-      ) ?? true;
+    const showLegend = readCheckbox(
+      state,
+      "show_legend_block_svc",
+      "show_legend_svc",
+    );
+    const showTitle = readCheckbox(
+      state,
+      "show_title_block_svc",
+      "show_title_checkbox_svc",
+      true,
+    );
 
     const showLabelEmoji = labelEmoji !== "none";
 
     // --- parse and aggregate ---
-    const lines = rawTableData.trim().split("\n");
-    const headers = lines[0].split(",").map((h) => h.trim());
-    const rows = lines
-      .slice(1)
-      .map((line) => line.split(",").map((cell) => cell.trim()));
+    const { headers, rows } = parseTableData(rawTableData);
     const labelIdx = headers.indexOf(labelCol);
     const valueIdx = headers.indexOf(valueCol);
-
-    const agg = {};
-    rows.forEach((row) => {
-      const label = row[labelIdx];
-      const value = Number(row[valueIdx]);
-      if (!isNaN(value)) {
-        agg[label] = (agg[label] || 0) + value;
-      }
-    });
+    const agg = aggregateSum(rows, labelIdx, valueIdx);
 
     // --- build preview ---
     const preview = generateSingleValueChartPreview({
@@ -1684,7 +1575,7 @@ singleValueChartEmojiActions.forEach((actionId) => {
     });
 
     const previewIdx = blocks.findIndex(
-      (b) => b.block_id === "preview_block_svc"
+      (b) => b.block_id === "preview_block_svc",
     );
     if (previewIdx !== -1) {
       blocks[previewIdx] = {
@@ -1765,24 +1656,12 @@ app.view("single_value_column_select", async ({ ack, view, body, client }) => {
   const maxRange = high;
 
   // parse CSV
-  const lines = rawTableData.trim().split("\n");
-  const headers = lines[0].split(",").map((h) => h.trim());
-  const rows = lines
-    .slice(1)
-    .map((line) => line.split(",").map((cell) => cell.trim()));
-
+  const { headers, rows } = parseTableData(rawTableData);
   const labelIdx = headers.indexOf(labelCol);
   const valueIdx = headers.indexOf(valueCol);
 
   // aggregate values
-  const agg = {};
-  rows.forEach((row) => {
-    const label = row[labelIdx];
-    const value = Number(row[valueIdx]);
-    if (!isNaN(value)) {
-      agg[label] = (agg[label] || 0) + value;
-    }
-  });
+  const agg = aggregateSum(rows, labelIdx, valueIdx);
 
   // placeholder preview
   const placeholderPreview = generateSingleValueChartPreview({
@@ -1945,22 +1824,10 @@ app.view("single_value_column_select", async ({ ack, view, body, client }) => {
           },
         },
       },
-      {
-        type: "input",
-        block_id: "custom_label_emoji_svc_block",
-        label: { type: "plain_text", text: `Override with a custom emoji` },
-        element: {
-          type: "plain_text_input",
-          action_id: "custom_label_emoji_svc",
-          initial_value: "",
-          placeholder: {
-            type: "plain_text",
-            text: "Type a custom emoji to override",
-          },
-        },
-        dispatch_action: true,
-        optional: true,
-      },
+      makeCustomEmojiInput(
+        "custom_label_emoji_svc",
+        "custom_label_emoji_svc_block",
+      ),
       { type: "divider" },
       // Low emoji
       {
@@ -1983,22 +1850,10 @@ app.view("single_value_column_select", async ({ ack, view, body, client }) => {
           },
         },
       },
-      {
-        type: "input",
-        block_id: "custom_low_emoji_svc_block",
-        label: { type: "plain_text", text: `Override with a custom emoji` },
-        element: {
-          type: "plain_text_input",
-          action_id: "custom_low_emoji_svc",
-          initial_value: "",
-          placeholder: {
-            type: "plain_text",
-            text: "Type a custom emoji to override",
-          },
-        },
-        dispatch_action: true,
-        optional: true,
-      },
+      makeCustomEmojiInput(
+        "custom_low_emoji_svc",
+        "custom_low_emoji_svc_block",
+      ),
       { type: "divider" },
       // Medium emoji
       {
@@ -2021,22 +1876,10 @@ app.view("single_value_column_select", async ({ ack, view, body, client }) => {
           },
         },
       },
-      {
-        type: "input",
-        block_id: "custom_medium_emoji_svc_block",
-        label: { type: "plain_text", text: `Override with a custom emoji` },
-        element: {
-          type: "plain_text_input",
-          action_id: "custom_medium_emoji_svc",
-          initial_value: "",
-          placeholder: {
-            type: "plain_text",
-            text: "Type a custom emoji to override",
-          },
-        },
-        dispatch_action: true,
-        optional: true,
-      },
+      makeCustomEmojiInput(
+        "custom_medium_emoji_svc",
+        "custom_medium_emoji_svc_block",
+      ),
       { type: "divider" },
       // High emoji
       {
@@ -2059,22 +1902,10 @@ app.view("single_value_column_select", async ({ ack, view, body, client }) => {
           },
         },
       },
-      {
-        type: "input",
-        block_id: "custom_high_emoji_svc_block",
-        label: { type: "plain_text", text: `Override with a custom emoji` },
-        element: {
-          type: "plain_text_input",
-          action_id: "custom_high_emoji_svc",
-          initial_value: "",
-          placeholder: {
-            type: "plain_text",
-            text: "Type a custom emoji to override",
-          },
-        },
-        dispatch_action: true,
-        optional: true,
-      },
+      makeCustomEmojiInput(
+        "custom_high_emoji_svc",
+        "custom_high_emoji_svc_block",
+      ),
       { type: "divider" },
       // Show title and legend
       {
@@ -2259,32 +2090,11 @@ trendChartEmojiActions.forEach((actionId) => {
     if (triggeredId === "label_emoji_tc") {
       dropdownValue = action.selected_option?.value;
       labelEmoji = dropdownValue;
-
-      // clear paired custom input
-      const customBlockIdx = blocks.findIndex((b) =>
-        b.block_id.startsWith("custom_label_emoji_tc_block")
+      resetCustomEmojiBlock(
+        blocks,
+        "custom_label_emoji_tc_block",
+        "custom_label_emoji_tc",
       );
-      if (customBlockIdx !== -1) {
-        blocks[customBlockIdx] = {
-          type: "input",
-          block_id: `custom_label_emoji_tc_block_reset_${Date.now()}`,
-          element: {
-            type: "plain_text_input",
-            action_id: "custom_label_emoji_tc",
-            initial_value: "",
-            placeholder: {
-              type: "plain_text",
-              text: "Type a custom emoji to override",
-            },
-          },
-          label: {
-            type: "plain_text",
-            text: `Override with a custom emoji`,
-          },
-          dispatch_action: true,
-          optional: true,
-        };
-      }
     } else if (triggeredId === "custom_label_emoji_tc") {
       customValue = action.value?.trim();
       if (customValue) labelEmoji = customValue;
@@ -2293,30 +2103,11 @@ trendChartEmojiActions.forEach((actionId) => {
     if (triggeredId === "low_emoji_tc") {
       dropdownValue = action.selected_option?.value;
       lowEmoji = dropdownValue;
-      const customBlockIdx = blocks.findIndex((b) =>
-        b.block_id.startsWith("custom_low_emoji_tc_block")
+      resetCustomEmojiBlock(
+        blocks,
+        "custom_low_emoji_tc_block",
+        "custom_low_emoji_tc",
       );
-      if (customBlockIdx !== -1) {
-        blocks[customBlockIdx] = {
-          type: "input",
-          block_id: `custom_low_emoji_tc_block_reset_${Date.now()}`,
-          element: {
-            type: "plain_text_input",
-            action_id: "custom_low_emoji_tc",
-            initial_value: "",
-            placeholder: {
-              type: "plain_text",
-              text: "Type a custom emoji to override",
-            },
-          },
-          label: {
-            type: "plain_text",
-            text: `Override with a custom emoji`,
-          },
-          dispatch_action: true,
-          optional: true,
-        };
-      }
     } else if (triggeredId === "custom_low_emoji_tc") {
       customValue = action.value?.trim();
       if (customValue) lowEmoji = customValue;
@@ -2325,30 +2116,11 @@ trendChartEmojiActions.forEach((actionId) => {
     if (triggeredId === "medium_emoji_tc") {
       dropdownValue = action.selected_option?.value;
       mediumEmoji = dropdownValue;
-      const customBlockIdx = blocks.findIndex((b) =>
-        b.block_id.startsWith("custom_medium_emoji_tc_block")
+      resetCustomEmojiBlock(
+        blocks,
+        "custom_medium_emoji_tc_block",
+        "custom_medium_emoji_tc",
       );
-      if (customBlockIdx !== -1) {
-        blocks[customBlockIdx] = {
-          type: "input",
-          block_id: `custom_medium_emoji_tc_block_reset_${Date.now()}`,
-          element: {
-            type: "plain_text_input",
-            action_id: "custom_medium_emoji_tc",
-            initial_value: "",
-            placeholder: {
-              type: "plain_text",
-              text: "Type a custom emoji to override",
-            },
-          },
-          label: {
-            type: "plain_text",
-            text: `Override with a custom emoji`,
-          },
-          dispatch_action: true,
-          optional: true,
-        };
-      }
     } else if (triggeredId === "custom_medium_emoji_tc") {
       customValue = action.value?.trim();
       if (customValue) mediumEmoji = customValue;
@@ -2357,54 +2129,32 @@ trendChartEmojiActions.forEach((actionId) => {
     if (triggeredId === "high_emoji_tc") {
       dropdownValue = action.selected_option?.value;
       highEmoji = dropdownValue;
-      const customBlockIdx = blocks.findIndex((b) =>
-        b.block_id.startsWith("custom_high_emoji_tc_block")
+      resetCustomEmojiBlock(
+        blocks,
+        "custom_high_emoji_tc_block",
+        "custom_high_emoji_tc",
       );
-      if (customBlockIdx !== -1) {
-        blocks[customBlockIdx] = {
-          type: "input",
-          block_id: `custom_high_emoji_tc_block_reset_${Date.now()}`,
-          element: {
-            type: "plain_text_input",
-            action_id: "custom_high_emoji_tc",
-            initial_value: "",
-            placeholder: {
-              type: "plain_text",
-              text: "Type a custom emoji to override",
-            },
-          },
-          label: {
-            type: "plain_text",
-            text: `Override with a custom emoji`,
-          },
-          dispatch_action: true,
-          optional: true,
-        };
-      }
     } else if (triggeredId === "custom_high_emoji_tc") {
       customValue = action.value?.trim();
       if (customValue) highEmoji = customValue;
     }
 
-    const showLegend =
-      state.show_legend_block_tc?.show_legend_tc?.selected_options?.some(
-        (opt) => opt.value === "show"
-      ) || false;
-
-    const showTitle =
-      state.show_title_block_tc?.show_title_checkbox_tc?.selected_options?.some(
-        (opt) => opt.value === "show"
-      ) ?? true;
+    const showLegend = readCheckbox(
+      state,
+      "show_legend_block_tc",
+      "show_legend_tc",
+    );
+    const showTitle = readCheckbox(
+      state,
+      "show_title_block_tc",
+      "show_title_checkbox_tc",
+      true,
+    );
 
     const showLabelEmoji = labelEmoji !== "none";
 
     // --- rebuild preview ---
-    const lines = rawTableData.trim().split("\n");
-    const headers = lines[0].split(",").map((h) => h.trim());
-    const rows = lines
-      .slice(1)
-      .map((line) => line.split(",").map((c) => c.trim()));
-
+    const { headers, rows } = parseTableData(rawTableData);
     const labelIdx = headers.indexOf(labelCol);
     const valueIdx = headers.indexOf(valueCol);
 
@@ -2429,7 +2179,7 @@ trendChartEmojiActions.forEach((actionId) => {
     });
 
     const previewIdx = blocks.findIndex(
-      (b) => b.block_id === "preview_block_tc"
+      (b) => b.block_id === "preview_block_tc",
     );
     if (previewIdx !== -1) {
       blocks[previewIdx] = {
@@ -2522,12 +2272,7 @@ app.view("trend_chart_column_select", async ({ ack, view, body, client }) => {
   const maxRange = high;
 
   // Parse CSV
-  const lines = rawTableData.trim().split("\n");
-  const headers = lines[0].split(",").map((h) => h.trim());
-  const rows = lines
-    .slice(1)
-    .map((line) => line.split(",").map((cell) => cell.trim()));
-
+  const { headers, rows } = parseTableData(rawTableData);
   const labelIdx = headers.indexOf(labelCol);
   const valueIdx = headers.indexOf(valueCol);
 
@@ -2701,22 +2446,10 @@ app.view("trend_chart_column_select", async ({ ack, view, body, client }) => {
           },
         },
       },
-      {
-        type: "input",
-        block_id: "custom_label_emoji_tc_block",
-        label: { type: "plain_text", text: `Override with a custom emoji` },
-        element: {
-          type: "plain_text_input",
-          action_id: "custom_label_emoji_tc",
-          initial_value: "",
-          placeholder: {
-            type: "plain_text",
-            text: "Type a custom emoji to override",
-          },
-        },
-        dispatch_action: true,
-        optional: true,
-      },
+      makeCustomEmojiInput(
+        "custom_label_emoji_tc",
+        "custom_label_emoji_tc_block",
+      ),
       {
         type: "divider",
       },
@@ -2740,22 +2473,7 @@ app.view("trend_chart_column_select", async ({ ack, view, body, client }) => {
           },
         },
       },
-      {
-        type: "input",
-        block_id: "custom_low_emoji_tc_block",
-        label: { type: "plain_text", text: `Override with a custom emoji` },
-        element: {
-          type: "plain_text_input",
-          action_id: "custom_low_emoji_tc",
-          initial_value: "",
-          placeholder: {
-            type: "plain_text",
-            text: "Type a custom emoji to override",
-          },
-        },
-        dispatch_action: true,
-        optional: true,
-      },
+      makeCustomEmojiInput("custom_low_emoji_tc", "custom_low_emoji_tc_block"),
       {
         type: "divider",
       },
@@ -2779,22 +2497,10 @@ app.view("trend_chart_column_select", async ({ ack, view, body, client }) => {
           },
         },
       },
-      {
-        type: "input",
-        block_id: "custom_medium_emoji_tc_block",
-        label: { type: "plain_text", text: `Override with a custom emoji` },
-        element: {
-          type: "plain_text_input",
-          action_id: "custom_medium_emoji_tc",
-          initial_value: "",
-          placeholder: {
-            type: "plain_text",
-            text: "Type a custom emoji to override",
-          },
-        },
-        dispatch_action: true,
-        optional: true,
-      },
+      makeCustomEmojiInput(
+        "custom_medium_emoji_tc",
+        "custom_medium_emoji_tc_block",
+      ),
       {
         type: "divider",
       },
@@ -2818,22 +2524,10 @@ app.view("trend_chart_column_select", async ({ ack, view, body, client }) => {
           },
         },
       },
-      {
-        type: "input",
-        block_id: "custom_high_emoji_tc_block",
-        label: { type: "plain_text", text: `Override with a custom emoji` },
-        element: {
-          type: "plain_text_input",
-          action_id: "custom_high_emoji_tc",
-          initial_value: "",
-          placeholder: {
-            type: "plain_text",
-            text: "Type a custom emoji to override",
-          },
-        },
-        dispatch_action: true,
-        optional: true,
-      },
+      makeCustomEmojiInput(
+        "custom_high_emoji_tc",
+        "custom_high_emoji_tc_block",
+      ),
       {
         type: "divider",
       },
@@ -2932,7 +2626,7 @@ function generateProportionChartPreview({
     const emoji = emojiMap[label.toLowerCase()] || "🔹";
     const slotCount = Math.max(
       Math.round((count / frequencySum) * totalSlots),
-      1
+      1,
     );
     emojiSlots.push(...Array(slotCount).fill(emoji));
   }
@@ -2940,7 +2634,7 @@ function generateProportionChartPreview({
   // fill remaining space
   if (emojiSlots.length < totalSlots) {
     emojiSlots.push(
-      ...Array(totalSlots - emojiSlots.length).fill(defaultEmoji)
+      ...Array(totalSlots - emojiSlots.length).fill(defaultEmoji),
     );
   } else if (emojiSlots.length > totalSlots) {
     emojiSlots = emojiSlots.slice(0, totalSlots);
@@ -2959,7 +2653,7 @@ function generateProportionChartPreview({
     let legend = topFive
       .map(
         ([label]) =>
-          `${emojiMap[label.toLowerCase()] || defaultEmoji} = ${label}`
+          `${emojiMap[label.toLowerCase()] || defaultEmoji} = ${label}`,
       )
       .join(", ");
 
@@ -3034,7 +2728,7 @@ proportionChartEmojiActions.forEach((actionId) => {
 
       const blocks = [...view.blocks];
       const customBlockIdx = blocks.findIndex((b) =>
-        b.block_id.startsWith(`custom_label_emoji_block_${idx}`)
+        b.block_id.startsWith(`custom_label_emoji_block_${idx}`),
       );
       if (customBlockIdx !== -1) {
         blocks[customBlockIdx] = {
@@ -3062,7 +2756,7 @@ proportionChartEmojiActions.forEach((actionId) => {
 
       const blocks = [...view.blocks];
       const customBlockIdx = blocks.findIndex((b) =>
-        b.block_id.startsWith("custom_label_emoji_block_other")
+        b.block_id.startsWith("custom_label_emoji_block_other"),
       );
       if (customBlockIdx !== -1) {
         blocks[customBlockIdx] = {
@@ -3095,42 +2789,22 @@ proportionChartEmojiActions.forEach((actionId) => {
     }
 
     // --- regenerate preview (unchanged logic) ---
-    const showLegend =
-      state.show_legend_block_por?.show_legend_por?.selected_options?.some(
-        (opt) => opt.value === "show"
-      ) || false;
+    const showLegend = readCheckbox(
+      state,
+      "show_legend_block_por",
+      "show_legend_por",
+    );
+    const showTitle = readCheckbox(
+      state,
+      "show_title_block_por",
+      "show_title_checkbox_por",
+      true,
+    );
 
-    const showTitle =
-      state.show_title_block_por?.show_title_checkbox_por?.selected_options?.some(
-        (opt) => opt.value === "show"
-      ) ?? true;
-
-    const lines = rawTableData.trim().split("\n");
-    const headers = lines[0].split(",").map((h) => h.trim());
-    const rows = lines
-      .slice(1)
-      .map((line) => line.split(",").map((cell) => cell.trim()));
-
+    const { headers, rows } = parseTableData(rawTableData);
     const labelIdx = headers.indexOf(labelCol);
-    const agg = {};
-
-    if (freqCol !== "none") {
-      const freqIdx = headers.indexOf(freqCol);
-      rows.forEach((row) => {
-        const rawLabel = row[labelIdx]?.trim() || "unknown";
-        const key = rawLabel.toLowerCase();
-        const freqVal = Number(row[freqIdx]?.trim());
-        if (!isNaN(freqVal)) {
-          agg[key] = (agg[key] || 0) + freqVal;
-        }
-      });
-    } else {
-      rows.forEach((row) => {
-        const rawLabel = row[labelIdx]?.trim() || "unknown";
-        const key = rawLabel.toLowerCase();
-        agg[key] = (agg[key] || 0) + 1;
-      });
-    }
+    const freqIdx = freqCol !== "none" ? headers.indexOf(freqCol) : -1;
+    const agg = aggregateFrequency(rows, labelIdx, freqIdx);
 
     const formattedPreview = generateProportionChartPreview({
       agg,
@@ -3140,14 +2814,14 @@ proportionChartEmojiActions.forEach((actionId) => {
       showLegend,
       numEmojisPerLine:
         Number(
-          state.num_emojis_per_line_block?.num_emojis_per_line_input?.value
+          state.num_emojis_per_line_block?.num_emojis_per_line_input?.value,
         ) || 10,
       defaultEmoji: emojiMap["other"] || otherEmoji,
     });
 
     const blocks = [...view.blocks];
     const previewIdx = blocks.findIndex(
-      (b) => b.block_id === "preview_block_por"
+      (b) => b.block_id === "preview_block_por",
     );
     if (previewIdx !== -1) {
       blocks[previewIdx] = {
@@ -3193,28 +2867,12 @@ app.view(
         .value;
 
     // parse CSV data
-    const lines = rawTableData.trim().split("\n");
-    const headers = lines[0].split(",").map((h) => h.trim());
-    const rows = lines
-      .slice(1)
-      .map((line) => line.split(",").map((cell) => cell.trim()));
+    const { headers, rows } = parseTableData(rawTableData);
     const labelIdx = headers.indexOf(labelCol);
+    const freqIdx = freqCol !== "none" ? headers.indexOf(freqCol) : -1;
 
     // count frequency of each label
-    const agg = {};
-    if (freqCol !== "none") {
-      const freqIdx = headers.indexOf(freqCol);
-      rows.forEach((row) => {
-        const key = (row[labelIdx]?.trim() || "unknown").toLowerCase();
-        const freqVal = Number(row[freqIdx]?.trim());
-        if (!isNaN(freqVal)) agg[key] = (agg[key] || 0) + freqVal;
-      });
-    } else {
-      rows.forEach((row) => {
-        const key = (row[labelIdx]?.trim() || "unknown").toLowerCase();
-        agg[key] = (agg[key] || 0) + 1;
-      });
-    }
+    const agg = aggregateFrequency(rows, labelIdx, freqIdx);
 
     const sortedLabels = Object.entries(agg).sort((a, b) => b[1] - a[1]);
     const topFive = sortedLabels.slice(0, 5).map(([label]) => label);
@@ -3228,7 +2886,7 @@ app.view(
     const numEmojisPerLine =
       Number(
         view.state.values.num_emojis_per_line_block?.num_emojis_per_line_input
-          ?.value
+          ?.value,
       ) || 10;
 
     const formattedPreview = generateProportionChartPreview({
@@ -3339,7 +2997,7 @@ app.view(
           suggestions,
           labelCol, // the column name
           "value", // we want categorical value recommendations
-          label // the actual categorical value
+          label, // the actual categorical value
         );
 
         realEmojiMap[label] = recs[0]?.emoji || "❓";
@@ -3373,7 +3031,7 @@ app.view(
               suggestions,
               labelCol,
               "value",
-              label
+              label,
             );
 
             return [
@@ -3550,7 +3208,7 @@ app.view(
         },
       });
     })();
-  }
+  },
 );
 
 ///////
@@ -3587,4 +3245,3 @@ const port = process.env.PORT || 3000;
 expressApp.listen(port, () => {
   console.log(`Express server listening on port ${port}`);
 });
-
