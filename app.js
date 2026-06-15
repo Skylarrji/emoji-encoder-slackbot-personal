@@ -6,6 +6,9 @@ import "dotenv/config";
 import emojiRegex from "emoji-regex";
 import axios from "axios";
 import express from "express";
+import { fileURLToPath } from "url";
+import { logEvent } from "./studyLog.js";
+import { getParticipantSchedule, describeSchedule } from "./studySchedule.js";
 
 const app = new App({
   token: process.env.SLACK_BOT_TOKEN,
@@ -13,8 +16,606 @@ const app = new App({
   appToken: process.env.SLACK_APP_TOKEN,
 });
 
+// ---- Placeholder-condition UI enforcement ---------------------------------
+// In the "placeholder" condition the participant must NOT be able to override
+// the fixed generic symbol, so the custom-emoji override text inputs are
+// removed from every modal at send time. Override blocks are the only blocks
+// whose block_id starts with "custom_" (see makeCustomEmojiInput), so they can
+// be stripped centrally here instead of at the dozens of modal-building call
+// sites. The in-memory block arrays are left untouched, so modal bookkeeping
+// (e.g. resetCustomEmojiBlock) keeps working in the other conditions.
+const isOverrideBlock = (b) =>
+  b && typeof b.block_id === "string" && b.block_id.startsWith("custom_");
+
+const stripOverrideBlocks = (args) => {
+  if (getActiveVariant() !== "placeholder" || !args || typeof args !== "object")
+    return args;
+  if (Array.isArray(args.view?.blocks)) {
+    return {
+      ...args,
+      view: {
+        ...args.view,
+        blocks: args.view.blocks.filter((b) => !isOverrideBlock(b)),
+      },
+    };
+  }
+  if (Array.isArray(args.blocks)) {
+    return { ...args, blocks: args.blocks.filter((b) => !isOverrideBlock(b)) };
+  }
+  return args;
+};
+
+// Wrap the per-request WebClient's view methods so the placeholder stripping is
+// applied to every views.open/update/push, regardless of which handler builds
+// the modal. The same client instance flows from middleware into the listener,
+// so patching it here covers all call sites.
+app.use(async ({ client, next }) => {
+  if (client?.views && !client.views.__placeholderPatched) {
+    for (const method of ["open", "update", "push"]) {
+      const original = client.views[method].bind(client.views);
+      client.views[method] = (args) => original(stripOverrideBlocks(args));
+    }
+    client.views.__placeholderPatched = true;
+  }
+  await next();
+});
+
+// ---- Study interface variant ----------------------------------------------
+// Selects which of the three study conditions the bot runs as:
+//   "semantic"    – full semantic emoji recommendations (default; calls backend)
+//   "manual"      – no suggestions; participant enters every emoji themselves
+//   "placeholder" – non-semantic generic symbol pre-populated in every slot
+// Set via the STUDY_VARIANT environment variable. The custom-emoji override
+// input is shown in the semantic and manual conditions but removed in the
+// placeholder condition (where the fixed symbol is non-overridable); the bot
+// identity and overall UI structure are otherwise identical across conditions.
+const VALID_VARIANTS = ["semantic", "manual", "placeholder"];
+let STUDY_VARIANT = (process.env.STUDY_VARIANT || "semantic").toLowerCase();
+if (!VALID_VARIANTS.includes(STUDY_VARIANT)) {
+  console.warn(
+    `[study] Invalid STUDY_VARIANT="${process.env.STUDY_VARIANT}". ` +
+      `Falling back to "semantic". Valid values: ${VALID_VARIANTS.join(", ")}.`,
+  );
+  STUDY_VARIANT = "semantic";
+}
+
+// Generic symbol shown for the non-semantic placeholder condition.
+const PLACEHOLDER_EMOJI = process.env.PLACEHOLDER_EMOJI || "⬛";
+// Neutral "unset" marker shown for the manual condition before the participant
+// enters their own emoji via the custom-emoji input.
+const MANUAL_UNSET_EMOJI = process.env.MANUAL_UNSET_EMOJI || "⬜";
+
+// ---- Experimenter-controlled study session context ------------------------
+// Holds the active participant and condition so every task/chart can be
+// attributed to the correct Latin-square cell, and so the experimenter can
+// switch conditions between tasks WITHOUT restarting the bot. Set via the
+// experimenter-only /setup command. STUDY_VARIANT (the env var) acts only
+// as the default until a session is configured.
+//
+// Set EXPERIMENTER_USER_IDS to a comma- or space-separated list of the
+// experimenters' Slack user IDs to lock the study-control commands to those
+// accounts. (The singular EXPERIMENTER_USER_ID is still accepted for backward
+// compatibility.) If neither is set, the commands are open (dev mode) and a
+// warning is shown.
+const EXPERIMENTER_USER_IDS = (
+  process.env.EXPERIMENTER_USER_IDS ||
+  process.env.EXPERIMENTER_USER_ID ||
+  ""
+)
+  .split(/[\s,]+/)
+  .map((id) => id.trim())
+  .filter(Boolean);
+
+const studySession = {
+  participantId: null,
+  participantNumber: null, // 1-based; selects the Latin-square row
+  schedule: null, // ordered array of the participant's 3 creation tasks
+  taskIndex: null, // 0-based index into schedule for the current creation task
+  variant: null, // overrides STUDY_VARIANT when a session is configured
+  chartDataType: null,
+  datasetTopic: null,
+  taskNumber: null,
+  latinSquareCell: null,
+  updatedAt: null,
+};
+
+// Apply the scheduled creation task at the given index: this is what makes the
+// bot AUTO-ADVANCE through the Latin square so the URA never picks a condition.
+// Returns false if there is no schedule or the index is out of range.
+function applyScheduledTask(index) {
+  if (
+    !studySession.schedule ||
+    index < 0 ||
+    index >= studySession.schedule.length
+  ) {
+    return false;
+  }
+  const task = studySession.schedule[index];
+  studySession.taskIndex = index;
+  studySession.variant = task.condition;
+  studySession.chartDataType = task.chartType;
+  studySession.datasetTopic = task.datasetTopic;
+  studySession.taskNumber = String(task.position);
+  studySession.latinSquareCell = `P${studySession.participantNumber}-T${task.position}`;
+  studySession.updatedAt = new Date().toISOString();
+  return true;
+}
+
+// Clear all per-participant session state (used by /reset between
+// participants so participant N+1 cannot inherit participant N's condition).
+function resetStudySession() {
+  studySession.participantId = null;
+  studySession.participantNumber = null;
+  studySession.schedule = null;
+  studySession.taskIndex = null;
+  studySession.variant = null;
+  studySession.chartDataType = null;
+  studySession.datasetTopic = null;
+  studySession.taskNumber = null;
+  studySession.latinSquareCell = null;
+  studySession.updatedAt = null;
+}
+
+// The condition currently in effect: the configured session variant if set,
+// otherwise the STUDY_VARIANT env default.
+function getActiveVariant() {
+  return studySession.variant || STUDY_VARIANT;
+}
+
+// A plain snapshot of the active context, for logging/attribution (item 3).
+function getStudyContext() {
+  return {
+    participantId: studySession.participantId,
+    participantNumber: studySession.participantNumber,
+    variant: getActiveVariant(),
+    chartDataType: studySession.chartDataType,
+    datasetTopic: studySession.datasetTopic,
+    taskNumber: studySession.taskNumber,
+    taskIndex: studySession.taskIndex,
+    taskCount: studySession.schedule ? studySession.schedule.length : null,
+    latinSquareCell: studySession.latinSquareCell,
+  };
+}
+
+// True if the given Slack user is allowed to run study-control commands.
+function isExperimenter(userId) {
+  return (
+    EXPERIMENTER_USER_IDS.length === 0 || EXPERIMENTER_USER_IDS.includes(userId)
+  );
+}
+
+// ---- Per-task measurement accumulator (item 3: logging) -------------------
+// Tracks the currently in-progress chart-creation task so we can measure
+// completion time and compare the emojis SHOWN to the participant against the
+// emojis they ultimately CHOSE (acceptance vs. override).
+let currentTask = null;
+
+function startTask(meta = {}) {
+  currentTask = {
+    taskId: `${studySession.participantId ?? "anon"}_${Date.now()}`,
+    startTs: Date.now(),
+    context: getStudyContext(),
+    shown: {}, // slotKey -> [emoji, ...] (the options first shown for that slot)
+    ...meta,
+  };
+  return currentTask;
+}
+
+// Record the option list shown for one slot. Keeps the first-seen set so later
+// re-renders of the same slot don't overwrite what was originally presented.
+function recordShown(slotKey, options) {
+  if (!currentTask || currentTask.shown[slotKey]) return;
+  currentTask.shown[slotKey] = (options || [])
+    .map((o) => o?.emoji)
+    .filter(Boolean);
+}
+
+// Record whatever getRecEmojiOptions returned for a slot (array or scale obj).
+function recordShownResult(type, colName, value, result) {
+  if (!currentTask) return;
+  const base = value != null ? `${colName}:${value}` : `${colName}`;
+  if (result && !Array.isArray(result) && result.low) {
+    recordShown(`scale_low:${base}`, result.low);
+    recordShown(`scale_medium:${base}`, result.medium);
+    recordShown(`scale_high:${base}`, result.high);
+  } else {
+    recordShown(`${type}:${base}`, result);
+  }
+}
+
+// Map the final preview view back to a chart type for attribution.
+function chartTypeFromView(view, pm) {
+  const ext = view?.external_id || "";
+  if (ext.includes("_bar")) return "bar";
+  if (ext.includes("_svc")) return "single_value";
+  if (ext.includes("_trend")) return "trend";
+  if (pm && pm.emojiMap) return "proportion";
+  return "unknown";
+}
+
+// Pull the participant's final emoji choices out of the post-stage metadata.
+function collectChosen(pm) {
+  const out = [];
+  const add = (slot, emoji) => {
+    if (emoji && emoji !== "none") out.push({ slot, emoji });
+  };
+  add("label", pm.labelEmoji);
+  add("value", pm.valueEmoji);
+  add("low", pm.lowEmoji);
+  add("medium", pm.mediumEmoji);
+  add("high", pm.highEmoji);
+  if (pm.emojiMap && typeof pm.emojiMap === "object") {
+    for (const [k, v] of Object.entries(pm.emojiMap)) add(`map:${k}`, v);
+  }
+  return out;
+}
+
+// Finalize the in-progress task: compute timing + acceptance/override metrics
+// and append a task_submit event. Safe to call even if no task is active.
+async function finalizeTask({ view, private_metadata, postedBy }) {
+  const task = currentTask;
+  currentTask = null;
+
+  const pm = private_metadata || {};
+  const chosen = collectChosen(pm);
+  const shown = task?.shown || {};
+  const shownLists = Object.values(shown);
+  const shownTops = new Set(shownLists.map((l) => l[0]).filter(Boolean));
+  const shownAll = new Set(shownLists.flat());
+
+  // Acceptance taxonomy per chosen slot:
+  //   accepted – used the top option shown for some slot
+  //   modified – chose a different option that WAS shown (non-top)
+  //   custom   – entered an emoji that was never shown (typed override)
+  let accepted = 0;
+  let modified = 0;
+  let custom = 0;
+  for (const { emoji } of chosen) {
+    if (shownTops.has(emoji)) accepted++;
+    else if (shownAll.has(emoji)) modified++;
+    else custom++;
+  }
+  const overrideCount = modified + custom;
+
+  await logEvent("task_submit", {
+    taskId: task?.taskId ?? null,
+    context: task?.context ?? getStudyContext(),
+    chartType: chartTypeFromView(view, pm),
+    chartTitle: pm.chartTitle ?? null,
+    durationMs: task ? Date.now() - task.startTs : null,
+    shown,
+    chosen,
+    metrics: {
+      chosenCount: chosen.length,
+      accepted,
+      modified,
+      custom,
+      overrideCount,
+    },
+    postedBy: postedBy ?? null,
+  });
+}
+
+// ---- Experimenter study-control commands ----------------------------------
+// /setup  – modal to load a participant; the bot then AUTO-ADVANCES the
+//           condition for each task from the Latin square (studySchedule.js).
+// /next   – advance to the next scheduled creation task's condition.
+// /back   – step back to the previous scheduled task (error recovery).
+// /check  – show the current session context (ephemeral).
+// /reset  – clear all session state between participants.
+app.command("/setup", async ({ command, ack, body, client, respond }) => {
+  await ack();
+
+  if (!isExperimenter(command.user_id)) {
+    await respond({
+      response_type: "ephemeral",
+      text: ":no_entry: This command is restricted to the experimenter.",
+    });
+    return;
+  }
+
+  // Condition is normally chosen automatically from the Latin square. The
+  // explicit options are kept only for piloting / one-off manual control.
+  const conditionOptions = [
+    {
+      text: { type: "plain_text", text: "Auto (from Latin-square schedule)" },
+      value: "auto",
+    },
+    {
+      text: { type: "plain_text", text: "Manual override: Semantic" },
+      value: "semantic",
+    },
+    {
+      text: { type: "plain_text", text: "Manual override: Manual" },
+      value: "manual",
+    },
+    {
+      text: { type: "plain_text", text: "Manual override: Placeholder" },
+      value: "placeholder",
+    },
+  ];
+
+  const textInput = (blockId, actionId, label, initial, optional = true) => ({
+    type: "input",
+    block_id: blockId,
+    optional,
+    label: { type: "plain_text", text: label },
+    element: {
+      type: "plain_text_input",
+      action_id: actionId,
+      ...(initial ? { initial_value: String(initial) } : {}),
+    },
+  });
+
+  try {
+    await client.views.open({
+      trigger_id: body.trigger_id,
+      view: {
+        type: "modal",
+        callback_id: "study_setup_modal",
+        title: { type: "plain_text", text: "Study Setup" },
+        submit: { type: "plain_text", text: "Start participant" },
+        close: { type: "plain_text", text: "Cancel" },
+        blocks: [
+          {
+            type: "context",
+            elements: [
+              {
+                type: "mrkdwn",
+                text: "Enter the participant ID and their assigned *number* from the Schedule sheet. The bot will load that participant's condition order automatically and start at Task 1.",
+              },
+            ],
+          },
+          textInput(
+            "participant_id_block",
+            "participant_id_input",
+            "Participant ID (e.g. P4)",
+            studySession.participantId,
+            false,
+          ),
+          textInput(
+            "participant_number_block",
+            "participant_number_input",
+            "Participant number (1, 2, 3, ... — selects the Latin-square row)",
+            studySession.participantNumber,
+            false,
+          ),
+          {
+            type: "input",
+            block_id: "condition_block",
+            label: { type: "plain_text", text: "Condition mode" },
+            element: {
+              type: "static_select",
+              action_id: "condition_input",
+              options: conditionOptions,
+              initial_option: conditionOptions[0],
+            },
+          },
+        ],
+      },
+    });
+  } catch (error) {
+    console.error("Error opening study setup modal:", error);
+  }
+});
+
+app.view("study_setup_modal", async ({ ack, view, body, client }) => {
+  const v = view.state.values;
+  const trim = (s) => {
+    const t = (s || "").trim();
+    return t.length ? t : null;
+  };
+
+  const participantId = trim(v.participant_id_block.participant_id_input.value);
+  const numberRaw = trim(
+    v.participant_number_block.participant_number_input.value,
+  );
+  const mode = v.condition_block.condition_input.selected_option.value;
+
+  // Validate the participant number BEFORE acking so we can surface a clear,
+  // inline error instead of silently misassigning a condition.
+  const n = Number(numberRaw);
+  if (!Number.isInteger(n) || n < 1) {
+    await ack({
+      response_action: "errors",
+      errors: {
+        participant_number_block:
+          "Enter a positive whole number (1, 2, 3, ...).",
+      },
+    });
+    return;
+  }
+  await ack();
+
+  // Load the participant's schedule and start at Task 1.
+  resetStudySession();
+  studySession.participantId = participantId;
+  studySession.participantNumber = n;
+  studySession.schedule = getParticipantSchedule(n);
+  applyScheduledTask(0);
+
+  // A manual override forces a single condition regardless of the schedule
+  // (piloting only). The schedule is still loaded so /next keeps working.
+  if (mode !== "auto") {
+    studySession.variant = mode;
+  }
+
+  logEvent("session_setup", {
+    context: getStudyContext(),
+    mode,
+    scheduleSummary: describeSchedule(n),
+  });
+  console.log(
+    `[study] Participant ${participantId} (#${n}) loaded — schedule: ${describeSchedule(n)}` +
+      (mode !== "auto" ? ` [manual override: ${mode}]` : ""),
+  );
+
+  try {
+    const ctx = getStudyContext();
+    const warn =
+      EXPERIMENTER_USER_IDS.length > 0
+        ? ""
+        : "\n:warning: No experimenter user IDs are set (EXPERIMENTER_USER_IDS); study-control commands are open to all users.";
+    // Open (or reuse) the DM channel first so the confirmation does not depend
+    // on a pre-existing IM with the bot (avoids a `not_found` on first use).
+    const im = await client.conversations.open({ users: body.user.id });
+    await client.chat.postMessage({
+      channel: im.channel.id,
+      text:
+        `:white_check_mark: *Participant loaded*\n` +
+        `• Participant: \`${ctx.participantId ?? "—"}\` (number \`${n}\`)\n` +
+        `• Full schedule: \`${describeSchedule(n)}\`\n` +
+        `• Now on: *Task ${ctx.taskNumber} of ${ctx.taskCount}* — condition \`${ctx.variant}\`` +
+        (mode !== "auto" ? `  _(manual override)_` : "") +
+        `\n• Run \`/next\` before each new creation task.` +
+        warn,
+    });
+  } catch (error) {
+    console.error("Error confirming study setup:", error);
+  }
+});
+
+// Shared helper: a prominent, plain-language status line the URA verifies
+// against the Schedule sheet before every task.
+function studyStatusText() {
+  const ctx = getStudyContext();
+  const configured = studySession.schedule !== null;
+  if (!configured) {
+    return (
+      `*No participant loaded.*\n` +
+      `• Active condition (default): \`${ctx.variant}\`\n` +
+      `• Run \`/setup\` to load a participant.`
+    );
+  }
+  const overrideNote =
+    ctx.variant === "placeholder" ? " — overrides disabled" : "";
+  return (
+    `*Participant ${ctx.participantId ?? "—"}* (number ${ctx.participantNumber})\n` +
+    `• ➤ *Task ${ctx.taskNumber} of ${ctx.taskCount}*  ·  chart \`${ctx.chartDataType}\`  ·  condition *${String(ctx.variant).toUpperCase()}*${overrideNote}\n` +
+    `• Full schedule: \`${describeSchedule(ctx.participantNumber)}\`\n` +
+    `• Updated: \`${studySession.updatedAt ?? "—"}\``
+  );
+}
+
+app.command("/check", async ({ command, ack, respond }) => {
+  await ack();
+
+  if (!isExperimenter(command.user_id)) {
+    await respond({
+      response_type: "ephemeral",
+      text: ":no_entry: This command is restricted to the experimenter.",
+    });
+    return;
+  }
+
+  await respond({ response_type: "ephemeral", text: studyStatusText() });
+});
+
+// Advance to the next scheduled creation task (auto-sets that task's condition).
+app.command("/next", async ({ command, ack, respond }) => {
+  await ack();
+
+  if (!isExperimenter(command.user_id)) {
+    await respond({
+      response_type: "ephemeral",
+      text: ":no_entry: This command is restricted to the experimenter.",
+    });
+    return;
+  }
+
+  if (!studySession.schedule) {
+    await respond({
+      response_type: "ephemeral",
+      text: ":warning: No participant loaded. Run `/setup` first.",
+    });
+    return;
+  }
+
+  const next = (studySession.taskIndex ?? -1) + 1;
+  if (next >= studySession.schedule.length) {
+    await respond({
+      response_type: "ephemeral",
+      text:
+        `:checkered_flag: All ${studySession.schedule.length} creation tasks are done for ` +
+        `\`${studySession.participantId}\`. Run \`/reset\` before the next participant.`,
+    });
+    return;
+  }
+
+  applyScheduledTask(next);
+  logEvent("task_advance", { context: getStudyContext() });
+  await respond({ response_type: "ephemeral", text: studyStatusText() });
+});
+
+// Step back to the previous scheduled task (error recovery if /next was
+// run too early).
+app.command("/back", async ({ command, ack, respond }) => {
+  await ack();
+
+  if (!isExperimenter(command.user_id)) {
+    await respond({
+      response_type: "ephemeral",
+      text: ":no_entry: This command is restricted to the experimenter.",
+    });
+    return;
+  }
+
+  if (!studySession.schedule || studySession.taskIndex === null) {
+    await respond({
+      response_type: "ephemeral",
+      text: ":warning: No participant loaded. Run `/setup` first.",
+    });
+    return;
+  }
+
+  const prev = studySession.taskIndex - 1;
+  if (prev < 0) {
+    await respond({
+      response_type: "ephemeral",
+      text: ":warning: Already at Task 1; cannot go back further.",
+    });
+    return;
+  }
+
+  applyScheduledTask(prev);
+  logEvent("task_back", { context: getStudyContext() });
+  await respond({ response_type: "ephemeral", text: studyStatusText() });
+});
+
+// Clear all session state between participants.
+app.command("/reset", async ({ command, ack, respond }) => {
+  await ack();
+
+  if (!isExperimenter(command.user_id)) {
+    await respond({
+      response_type: "ephemeral",
+      text: ":no_entry: This command is restricted to the experimenter.",
+    });
+    return;
+  }
+
+  const prior = studySession.participantId;
+  logEvent("session_reset", { previousParticipant: prior });
+  resetStudySession();
+  await respond({
+    response_type: "ephemeral",
+    text:
+      `:broom: Session cleared${prior ? ` (was \`${prior}\`)` : ""}. ` +
+      `Active condition is back to the \`${STUDY_VARIANT}\` default until the next \`/setup\`.`,
+  });
+});
+
 app.command("/emojichart", async ({ command, ack, body, client }) => {
   await ack();
+
+  // Begin a measured chart-creation task: capture the start time and the
+  // active study context, and reset the per-task shown/chosen accumulator.
+  startTask({ triggeredBy: command.user_id });
+  logEvent("task_start", {
+    taskId: currentTask.taskId,
+    context: currentTask.context,
+    triggeredBy: command.user_id,
+  });
 
   const metadata = {
     channelId: command.channel_id,
@@ -800,7 +1401,14 @@ const inFlight = new Map();
 async function recommendEmojis(tableData = null, tableDescription = null) {
   if (!tableData || !tableDescription) return [];
 
-  const cacheKey = `${tableDescription}_${JSON.stringify(tableData)}`;
+  // Non-semantic study variants never call the recommendation backend; the
+  // emoji content is supplied entirely by getRecEmojiOptions().
+  const variant = getActiveVariant();
+  if (variant !== "semantic") return {};
+
+  // Key the cache by variant so a runtime condition switch can never serve a
+  // semantic recommendation into a non-semantic condition.
+  const cacheKey = `${variant}_${tableDescription}_${JSON.stringify(tableData)}`;
 
   // return cache immediately if available
   if (emojiRecommendationCache.has(cacheKey)) {
@@ -847,11 +1455,45 @@ async function recommendEmojis(tableData = null, tableDescription = null) {
 }
 
 function getRecEmojiOptions(recommendations, colName, type, value = null) {
+  // Thin wrapper that records, for study logging, the option set actually shown
+  // to the participant for this slot, then returns the underlying result.
+  const result = _getRecEmojiOptions(recommendations, colName, type, value);
+  recordShownResult(type, colName, value, result);
+  return result;
+}
+
+function _getRecEmojiOptions(recommendations, colName, type, value = null) {
+  // Study-variant overrides. Returning a single non-empty option keeps every
+  // Slack static_select valid and ensures the call-site fallbacks (e.g.
+  // `|| "📉"`) never fire, so no semantic default leaks into these conditions:
+  //   manual      – neutral "unset" marker; participant picks via custom input
+  //   placeholder – one generic, non-semantic symbol in every slot
+  const variant = getActiveVariant();
+  if (variant === "manual" || variant === "placeholder") {
+    const fill = {
+      emoji: variant === "manual" ? MANUAL_UNSET_EMOJI : PLACEHOLDER_EMOJI,
+    };
+    if (type === "scale") {
+      return { low: [fill], medium: [fill], high: [fill] };
+    }
+    return [fill];
+  }
+
   let emojis = [];
 
   if (type === "value") {
-    emojis =
-      recommendations?.categorical_value_emojis?.[colName]?.[value] || [];
+    // The proportion-chart aggregation lowercases label values, but the backend
+    // keys categorical_value_emojis by the original-case value (e.g. "Horror").
+    // Match case-insensitively so the lookup doesn't silently return [] and
+    // produce an empty Slack static_select (which Slack rejects).
+    const valueMap = recommendations?.categorical_value_emojis?.[colName] || {};
+    const matchKey =
+      value in valueMap
+        ? value
+        : Object.keys(valueMap).find(
+            (k) => k.toLowerCase() === String(value).toLowerCase(),
+          );
+    emojis = (matchKey != null ? valueMap[matchKey] : []) || [];
     return emojis.map((e) => ({ emoji: e.trim() }));
   }
 
@@ -3227,21 +3869,52 @@ app.view("post_final_message", async ({ ack, body, view, client }) => {
   } catch (error) {
     console.error("Error posting final chart:", error);
   }
+
+  // Finalize study measurements for this task (timing + acceptance/override).
+  // Wrapped so a logging failure can never affect the participant's session.
+  try {
+    await finalizeTask({
+      view,
+      private_metadata,
+      postedBy: body.user.id,
+    });
+  } catch (error) {
+    console.error("Error finalizing study task log:", error);
+  }
 });
 
 // Start Bolt app (Slackbot in socket mode)
-(async () => {
-  await app.start();
-  console.log("⚡️ Emoji Encoder is running!");
-})();
+// Only start the servers when run directly (e.g. `npm run start`); when this
+// module is imported (e.g. by tests) we skip startup so no Slack/port binding
+// occurs.
+const isMainModule = process.argv[1] === fileURLToPath(import.meta.url);
 
-// Express for Render port binding
-const expressApp = express();
-expressApp.get("/", (req, res) => {
-  res.send("Emoji Encoder Slackbot is running on express!");
-});
+if (isMainModule) {
+  (async () => {
+    await app.start();
+    console.log("⚡️ Emoji Encoder is running!");
+    console.log(`[study] Active interface variant: ${STUDY_VARIANT}`);
+  })();
 
-const port = process.env.PORT || 3000;
-expressApp.listen(port, () => {
-  console.log(`Express server listening on port ${port}`);
-});
+  // Express for Render port binding
+  const expressApp = express();
+  expressApp.get("/", (req, res) => {
+    res.send("Emoji Encoder Slackbot is running on express!");
+  });
+
+  const port = process.env.PORT || 3000;
+  expressApp.listen(port, () => {
+    console.log(`Express server listening on port ${port}`);
+  });
+}
+
+export {
+  recommendEmojis,
+  getRecEmojiOptions,
+  STUDY_VARIANT,
+  studySession,
+  getActiveVariant,
+  getStudyContext,
+  startTask,
+  finalizeTask,
+};

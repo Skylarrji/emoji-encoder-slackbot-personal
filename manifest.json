@@ -5,17 +5,47 @@
     "background_color": "#000000"
   },
   "features": {
+    "app_home": {
+      "home_tab_enabled": true,
+      "messages_tab_enabled": true,
+      "messages_tab_read_only_enabled": false
+    },
+    "bot_user": {
+      "display_name": "Emoji Encoder Bot",
+      "always_online": true
+    },
     "slash_commands": [
       {
         "command": "/emojichart",
         "description": "Create an emoji-based chart from your data",
         "should_escape": false
+      },
+      {
+        "command": "/setup",
+        "description": "Experimenter: load a participant and start their condition schedule",
+        "should_escape": false
+      },
+      {
+        "command": "/next",
+        "description": "Experimenter: advance to the next creation task's condition",
+        "should_escape": false
+      },
+      {
+        "command": "/back",
+        "description": "Experimenter: step back to the previous creation task",
+        "should_escape": false
+      },
+      {
+        "command": "/check",
+        "description": "Experimenter: show the current study session context",
+        "should_escape": false
+      },
+      {
+        "command": "/reset",
+        "description": "Experimenter: clear session state between participants",
+        "should_escape": false
       }
-    ],
-    "bot_user": {
-      "display_name": "Emoji Encoder Bot",
-      "always_online": true
-    }
+    ]
   },
   "oauth_config": {
     "scopes": {
@@ -29,19 +59,17 @@
         "channels:read",
         "groups:read"
       ]
-    }
+    },
+    "pkce_enabled": false
   },
   "settings": {
-    "event_subscriptions": {
-      "request_url": "https://your-server.com/slack/events", 
-      "bot_events": []
-    },
     "interactivity": {
       "is_enabled": true,
-      "request_url": "https://your-server.com/slack/interact" 
+      "request_url": "https://your-server.com/slack/interact"
     },
     "org_deploy_enabled": false,
     "socket_mode_enabled": true,
-    "token_rotation_enabled": false
+    "token_rotation_enabled": false,
+    "is_mcp_enabled": false
   }
 }

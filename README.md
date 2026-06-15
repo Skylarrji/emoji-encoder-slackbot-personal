@@ -60,18 +60,60 @@ A Slack bot that creates emoji-based data visualizations from CSV data.
    - Go to **OAuth & Permissions** on the lefthand side
    - Enter the value under **Bot User OAuth Token** to replace `your_slack_bot_token` in the `.env` file
 
+   #### Study configuration (optional)
+
+   The following variables configure the bot for use as a controlled-study
+   interface. They are optional; if omitted, the bot runs as the full semantic
+   recommendation tool with study controls open to all users.
+
+   | Variable                | Default    | Description                                                                                                                                                                                                                                                                                                                                                                            |
+   | ----------------------- | ---------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+   | `STUDY_VARIANT`         | `semantic` | The interface condition to start in. One of `semantic` (full semantic recommendations), `manual` (no suggestions; the participant enters every emoji), or `placeholder` (a generic non-semantic symbol in every slot). Acts only as the default — once an experimenter runs `/setup`, the chosen condition overrides this without a restart.                                           |
+   | `EXPERIMENTER_USER_IDS` | _(unset)_  | A comma- or space-separated list of the experimenters' Slack user IDs. When set, the `/setup` and `/check` commands are restricted to those accounts so participants cannot view or change the active condition. When unset, the commands are open to all users (dev mode) and a warning is shown. (The singular `EXPERIMENTER_USER_ID` is still accepted for backward compatibility.) |
+   | `PLACEHOLDER_EMOJI`     | `⬛`       | The generic symbol used for every slot in the `placeholder` condition.                                                                                                                                                                                                                                                                                                                 |
+   | `MANUAL_UNSET_EMOJI`    | `⬜`       | The neutral "unset" marker shown in the `manual` condition before the participant types their own emoji.                                                                                                                                                                                                                                                                               |
+   | `EMOJI_API_URL`         | _(unset)_  | Base URL of the Python emoji-recommendation backend (the bot calls `${EMOJI_API_URL}/recommend`). Required only for the `semantic` condition.                                                                                                                                                                                                                                          |
+
+   Example `.env` for running a session as the manual condition with the
+   commands locked to the experimenter:
+
+   ```
+   SLACK_APP_TOKEN=your_slack_app_token
+   SLACK_BOT_TOKEN=your_slack_bot_token
+   EMOJI_API_URL=http://localhost:8000
+   STUDY_VARIANT=manual
+   EXPERIMENTER_USER_IDS=U0123456789,U0987654321
+   ```
+
+   To find your Slack user ID, open your profile in Slack, click the
+   **⋯ (More)** menu, and choose **Copy member ID**.
+
+   #### Running and switching conditions during a session
+
+   The active condition can be set or changed at any time without restarting
+   the bot, using the experimenter-only slash commands:
+   - `/setup` — opens a modal to set the active participant ID and
+     condition (and, optionally, the chart data type, dataset topic, task
+     number, and Latin-square cell). The chosen condition takes effect
+     immediately for the next chart.
+   - `/check` — shows the current session context (participant,
+     condition, and task metadata) as a private message.
+
 5. **Start the bot:**
+
    ```bash
    cd ../emoji-encoder-slackbot
    npm run start
    ```
 
    You should see the following message in the console (if not, see the Troubleshooting section):
+
    ```
    > bolt-js-getting-started-app@2.0.0 start
    > node app.js
 
    ⚡️ Emoji Encoder is running!
+   [study] Active interface variant: semantic
    ```
 
 ### How it works
@@ -117,7 +159,6 @@ If you are receiving the following message in the console, run the `/emojichart`
 
 [WARN]  socket-mode:SlackWebSocket:1 A pong wasn't received from the server before the timeout of 5000ms!
 ```
-
 
 ### Python Backend Issues
 
