@@ -16,7 +16,25 @@ const app = new App({
   appToken: process.env.SLACK_APP_TOKEN,
 });
 
-// ---- Placeholder-condition UI enforcement ---------------------------------
+const runDetached = (label, task) => {
+  Promise.resolve()
+    .then(task)
+    .catch((error) => {
+      console.warn(
+        `${label}:`,
+        error?.data?.error || error?.message || error,
+      );
+    });
+};
+
+app.error(async (error) => {
+  console.error(
+    "Unhandled Bolt listener error:",
+    error?.data?.error || error?.message || error,
+  );
+});
+
+// ---- Condition-specific modal UI enforcement ------------------------------
 // In the "placeholder" condition the participant must NOT be able to override
 // the fixed generic symbol, so the custom-emoji override text inputs are
 // removed from every modal at send time. Override blocks are the only blocks
@@ -27,35 +45,126 @@ const app = new App({
 const isOverrideBlock = (b) =>
   b && typeof b.block_id === "string" && b.block_id.startsWith("custom_");
 
-const stripOverrideBlocks = (args) => {
-  if (getActiveVariant() !== "placeholder" || !args || typeof args !== "object")
+// ---- Manual-condition UI rewrite ------------------------------------------
+// In the "manual" condition the participant types every emoji themselves, so a
+// recommendation dropdown (which only ever holds the neutral "unset" marker)
+// plus a separate "Override with a custom emoji" box is redundant and
+// confusing. For each emoji slot we therefore DROP the recommendation
+// static_select and turn the paired custom-emoji input into the single primary
+// field, relabelled "Choose <slot> emoji for <column>" with an empty value.
+// Like the placeholder strip above, this is done centrally at send time so it
+// covers every modal-building call site.
+
+// Matches the action_id of every emoji-recommendation dropdown across the four
+// chart types (bar/svc/tc) and the proportion per-category selects.
+const EMOJI_SLOT_ACTION_RE =
+  /^(?:label|value|low|medium|high)_emoji_(?:bar|svc|tc)$|^por_label_emoji_(?:\d+|other)$/;
+
+const isEmojiDropdownSection = (b) =>
+  b &&
+  b.type === "section" &&
+  b.accessory?.type === "static_select" &&
+  typeof b.accessory.action_id === "string" &&
+  EMOJI_SLOT_ACTION_RE.test(b.accessory.action_id);
+
+// Turn a recommendation section's descriptive text into a "Choose ..." label.
+// Already-transformed labels (starting with "Choose") are returned unchanged so
+// the rewrite is idempotent across modal re-renders.
+const manualChooseLabel = (text) => {
+  if (typeof text !== "string") return "Choose an emoji";
+  const t = text.replace(/^\*+|\*+$/g, "").trim();
+  if (/^Choose /i.test(t)) return t;
+  let m;
+  if (
+    (m = t.match(
+      /^Emoji recommendation for the (?:label|value) column \((.+)\)$/i,
+    ))
+  )
+    return `Choose emoji for ${m[1]}`;
+  if ((m = t.match(/^(Low|Medium|High) value emoji recommendation for (.+)$/i)))
+    return `Choose ${m[1].toLowerCase()} value emoji for ${m[2]}`;
+  if ((m = t.match(/^Emoji recommendation for (.+)$/i)))
+    return `Choose emoji for ${m[1]}`;
+  return "Choose an emoji";
+};
+
+const isOptionalManualEmojiInput = (actionId) => actionId === "custom_label_emoji_tc";
+
+// Rewrite a block array for the manual condition (see comment above).
+const manualizeBlocks = (blocks) => {
+  const out = [];
+  let pendingLabel = null;
+  for (const b of blocks) {
+    if (isEmojiDropdownSection(b)) {
+      pendingLabel = manualChooseLabel(b.text?.text);
+      continue; // drop the recommendation dropdown
+    }
+    if (isOverrideBlock(b) && b.element?.type === "plain_text_input") {
+      const { placeholder, ...element } = b.element;
+      out.push({
+        ...b,
+        label: {
+          type: "plain_text",
+          text: pendingLabel || manualChooseLabel(b.label?.text),
+        },
+        // Trend labels are optional because the trend chart can be read from the
+        // time axis alone; all other manual emoji choices remain required.
+        optional: isOptionalManualEmojiInput(element.action_id),
+        element: { ...element, initial_value: "" },
+      });
+      pendingLabel = null;
+      continue;
+    }
+    out.push(b);
+  }
+  return out;
+};
+
+// Apply the active condition's block transform: strip override inputs for
+// "placeholder", rewrite slots for "manual", and leave "semantic" untouched.
+const transformBlocksForVariant = (blocks) => {
+  const variant = getActiveVariant();
+  if (variant === "placeholder")
+    return blocks.filter((b) => !isOverrideBlock(b));
+  if (variant === "manual") return manualizeBlocks(blocks);
+  return blocks;
+};
+
+const applyVariantBlockTransform = (args) => {
+  const variant = getActiveVariant();
+  if (
+    (variant !== "placeholder" && variant !== "manual") ||
+    !args ||
+    typeof args !== "object"
+  )
     return args;
   if (Array.isArray(args.view?.blocks)) {
     return {
       ...args,
       view: {
         ...args.view,
-        blocks: args.view.blocks.filter((b) => !isOverrideBlock(b)),
+        blocks: transformBlocksForVariant(args.view.blocks),
       },
     };
   }
   if (Array.isArray(args.blocks)) {
-    return { ...args, blocks: args.blocks.filter((b) => !isOverrideBlock(b)) };
+    return { ...args, blocks: transformBlocksForVariant(args.blocks) };
   }
   return args;
 };
 
-// Wrap the per-request WebClient's view methods so the placeholder stripping is
-// applied to every views.open/update/push, regardless of which handler builds
-// the modal. The same client instance flows from middleware into the listener,
-// so patching it here covers all call sites.
+// Wrap the per-request WebClient's view methods so the condition-specific block
+// transform is applied to every views.open/update/push, regardless of which
+// handler builds the modal. The same client instance flows from middleware into
+// the listener, so patching it here covers all call sites.
 app.use(async ({ client, next }) => {
-  if (client?.views && !client.views.__placeholderPatched) {
+  if (client?.views && !client.views.__variantPatched) {
     for (const method of ["open", "update", "push"]) {
       const original = client.views[method].bind(client.views);
-      client.views[method] = (args) => original(stripOverrideBlocks(args));
+      client.views[method] = (args) =>
+        original(applyVariantBlockTransform(args));
     }
-    client.views.__placeholderPatched = true;
+    client.views.__variantPatched = true;
   }
   await next();
 });
@@ -84,6 +193,62 @@ const PLACEHOLDER_EMOJI = process.env.PLACEHOLDER_EMOJI || "⬛";
 // Neutral "unset" marker shown for the manual condition before the participant
 // enters their own emoji via the custom-emoji input.
 const MANUAL_UNSET_EMOJI = process.env.MANUAL_UNSET_EMOJI || "⬜";
+
+// ---- Placeholder-condition mark sets --------------------------------------
+// The placeholder condition removes SEMANTICS while holding the encoding's
+// STRUCTURE constant, so any semantic > placeholder effect can be attributed to
+// meaning rather than merely to having distinguishable marks. To do that the
+// placeholder marks mirror the structure of the slot they fill:
+//
+//   NOMINAL slots (proportion categories; bar/SVC/trend label & value columns)
+//     get DISTINCT, equal-weight, hue-coded marks. Hue is categorical (no
+//     inherent order) and the defaults avoid red/green so no valence/traffic-
+//     light reading is implied, and none resemble the data's topic.
+//
+//   ORDINAL slots (the low/medium/high value scale) get a monotonic, neutral
+//     shade ramp that preserves order without carrying topical meaning.
+//
+// Both sets are env-overridable (comma/space separated) so the design can be
+// tuned or pre-registered without code changes.
+const parseEmojiList = (raw) =>
+  (raw || "")
+    .split(/[\s,]+/)
+    .map((s) => s.trim())
+    .filter(Boolean);
+
+const PLACEHOLDER_NOMINAL_EMOJIS = (() => {
+  const list = parseEmojiList(process.env.PLACEHOLDER_NOMINAL_EMOJIS);
+  return list.length ? list : ["🔵", "🟠", "🟡", "🟣", "🟤", "⚫"];
+})();
+
+const PLACEHOLDER_SCALE_EMOJIS = (() => {
+  const list = parseEmojiList(process.env.PLACEHOLDER_SCALE_EMOJIS);
+  return list.length >= 3 ? list : ["▪️", "◾", "⬛"];
+})();
+
+// Stable, first-seen assignment of DISTINCT nominal placeholders within a single
+// chart build. Keyed by a composite slot key drawn from one shared sequence so
+// that every nominal slot shown together (e.g. all proportion categories, or a
+// bar chart's label vs. value columns) gets its own distinct mark. Cleared at
+// the start of each new chart (startTask) and on /reset so assignments never
+// leak across charts or participants.
+const placeholderNominalAssignments = new Map();
+
+function resetPlaceholderAssignments() {
+  placeholderNominalAssignments.clear();
+}
+
+function nominalPlaceholderFor(key) {
+  const k = String(key ?? "");
+  if (!placeholderNominalAssignments.has(k)) {
+    const idx = placeholderNominalAssignments.size;
+    const set = PLACEHOLDER_NOMINAL_EMOJIS.length
+      ? PLACEHOLDER_NOMINAL_EMOJIS
+      : [PLACEHOLDER_EMOJI];
+    placeholderNominalAssignments.set(k, set[idx % set.length]);
+  }
+  return placeholderNominalAssignments.get(k);
+}
 
 // ---- Experimenter-controlled study session context ------------------------
 // Holds the active participant and condition so every task/chart can be
@@ -154,6 +319,7 @@ function resetStudySession() {
   studySession.taskNumber = null;
   studySession.latinSquareCell = null;
   studySession.updatedAt = null;
+  resetPlaceholderAssignments();
 }
 
 // The condition currently in effect: the configured session variant if set,
@@ -191,6 +357,8 @@ function isExperimenter(userId) {
 let currentTask = null;
 
 function startTask(meta = {}) {
+  // Each new chart build gets a fresh set of distinct placeholder marks.
+  resetPlaceholderAssignments();
   currentTask = {
     taskId: `${studySession.participantId ?? "anon"}_${Date.now()}`,
     startTs: Date.now(),
@@ -199,6 +367,17 @@ function startTask(meta = {}) {
     ...meta,
   };
   return currentTask;
+}
+
+function isCurrentTaskMetadata(privateMetadata = {}) {
+  return !privateMetadata.taskId || currentTask?.taskId === privateMetadata.taskId;
+}
+
+function logSkippedStaleModalUpdate(chartType, taskId) {
+  console.warn(
+    `Skipping ${chartType} recommendation modal update: stale task`,
+    taskId || "unknown",
+  );
 }
 
 // Record the option list shown for one slot. Keeps the first-seen set so later
@@ -376,7 +555,7 @@ app.command("/setup", async ({ command, ack, body, client, respond }) => {
           textInput(
             "participant_number_block",
             "participant_number_input",
-            "Participant number (1, 2, 3, ... — selects the Latin-square row)",
+            "Participant number (1, 2, 3, etc,) - selects the Latin-square row",
             studySession.participantNumber,
             false,
           ),
@@ -446,7 +625,7 @@ app.view("study_setup_modal", async ({ ack, view, body, client }) => {
     scheduleSummary: describeSchedule(n),
   });
   console.log(
-    `[study] Participant ${participantId} (#${n}) loaded — schedule: ${describeSchedule(n)}` +
+    `[study] Participant ${participantId} (#${n}) loaded - schedule: ${describeSchedule(n)}` +
       (mode !== "auto" ? ` [manual override: ${mode}]` : ""),
   );
 
@@ -463,9 +642,9 @@ app.view("study_setup_modal", async ({ ack, view, body, client }) => {
       channel: im.channel.id,
       text:
         `:white_check_mark: *Participant loaded*\n` +
-        `• Participant: \`${ctx.participantId ?? "—"}\` (number \`${n}\`)\n` +
+        `• Participant: \`${ctx.participantId ?? "-"}\` (number \`${n}\`)\n` +
         `• Full schedule: \`${describeSchedule(n)}\`\n` +
-        `• Now on: *Task ${ctx.taskNumber} of ${ctx.taskCount}* — condition \`${ctx.variant}\`` +
+        `• Now on: *Task ${ctx.taskNumber} of ${ctx.taskCount}* - condition \`${ctx.variant}\`` +
         (mode !== "auto" ? `  _(manual override)_` : "") +
         `\n• Run \`/next\` before each new creation task.` +
         warn,
@@ -487,13 +666,11 @@ function studyStatusText() {
       `• Run \`/setup\` to load a participant.`
     );
   }
-  const overrideNote =
-    ctx.variant === "placeholder" ? " — overrides disabled" : "";
   return (
-    `*Participant ${ctx.participantId ?? "—"}* (number ${ctx.participantNumber})\n` +
-    `• ➤ *Task ${ctx.taskNumber} of ${ctx.taskCount}*  ·  chart \`${ctx.chartDataType}\`  ·  condition *${String(ctx.variant).toUpperCase()}*${overrideNote}\n` +
+    `*Participant ${ctx.participantId ?? "-"}* (number ${ctx.participantNumber})\n` +
+    `• ➤ *Task ${ctx.taskNumber} of ${ctx.taskCount}*  ·  chart \`${ctx.chartDataType}\`  ·  condition *${String(ctx.variant).toUpperCase()}*\n` +
     `• Full schedule: \`${describeSchedule(ctx.participantNumber)}\`\n` +
-    `• Updated: \`${studySession.updatedAt ?? "—"}\``
+    `• Updated: \`${studySession.updatedAt ?? "-"}\``
   );
 }
 
@@ -610,7 +787,7 @@ app.command("/emojichart", async ({ command, ack, body, client }) => {
 
   // Begin a measured chart-creation task: capture the start time and the
   // active study context, and reset the per-task shown/chosen accumulator.
-  startTask({ triggeredBy: command.user_id });
+  const task = startTask({ triggeredBy: command.user_id });
   logEvent("task_start", {
     taskId: currentTask.taskId,
     context: currentTask.context,
@@ -618,6 +795,7 @@ app.command("/emojichart", async ({ command, ack, body, client }) => {
   });
 
   const metadata = {
+    taskId: task.taskId,
     channelId: command.channel_id,
     threadTs: command.thread_ts || null,
   };
@@ -889,6 +1067,7 @@ const monthNames = [
   "feb",
   "mar",
   "apr",
+  "may",
   "jun",
   "jul",
   "aug",
@@ -981,6 +1160,20 @@ export const parseTemporalLabel = (value) => {
     if (parsed.isValid()) return parsed;
   }
 
+  // Match month/weekday names BEFORE the loose moment(str) fallback below.
+  // Passing a bare name like "february" to moment(str) cannot be parsed with a
+  // recognized RFC2822/ISO format, so moment falls back to JS Date() and emits
+  // a deprecation warning - even though these named branches handle it cleanly.
+  if (monthNames.includes(str)) {
+    const monthIndex = monthNames.indexOf(str) % 12;
+    return moment().month(monthIndex).startOf("month");
+  }
+
+  if (weekdayNames.includes(str)) {
+    const dayIndex = weekdayNames.indexOf(str) % 7;
+    return moment().day(dayIndex);
+  }
+
   const looseParsed = moment(str);
   if (looseParsed.isValid()) return looseParsed;
 
@@ -990,16 +1183,6 @@ export const parseTemporalLabel = (value) => {
     if (num >= 0 && num <= 23)
       return moment(`2000-01-01 ${num}:00`, "YYYY-MM-DD HH:mm");
     if (num >= 1 && num <= 31) return moment(`2000-01-${num}`, "YYYY-MM-DD");
-  }
-
-  if (monthNames.includes(str)) {
-    const monthIndex = monthNames.indexOf(str) % 12;
-    return moment().month(monthIndex).startOf("month");
-  }
-
-  if (weekdayNames.includes(str)) {
-    const dayIndex = weekdayNames.indexOf(str) % 7;
-    return moment().day(dayIndex);
   }
 
   return moment.invalid();
@@ -1467,16 +1650,31 @@ function _getRecEmojiOptions(recommendations, colName, type, value = null) {
   // Slack static_select valid and ensures the call-site fallbacks (e.g.
   // `|| "📉"`) never fire, so no semantic default leaks into these conditions:
   //   manual      – neutral "unset" marker; participant picks via custom input
-  //   placeholder – one generic, non-semantic symbol in every slot
+  //   placeholder – structure-matched non-semantic marks (distinct per nominal
+  //                 slot; a monotonic neutral ramp for the low/med/high scale)
   const variant = getActiveVariant();
-  if (variant === "manual" || variant === "placeholder") {
-    const fill = {
-      emoji: variant === "manual" ? MANUAL_UNSET_EMOJI : PLACEHOLDER_EMOJI,
-    };
+  if (variant === "manual") {
+    const fill = { emoji: MANUAL_UNSET_EMOJI };
     if (type === "scale") {
       return { low: [fill], medium: [fill], high: [fill] };
     }
     return [fill];
+  }
+  if (variant === "placeholder") {
+    if (type === "scale") {
+      // Ordinal: monotonic neutral shade ramp (order preserved, no meaning).
+      return {
+        low: [{ emoji: PLACEHOLDER_SCALE_EMOJIS[0] }],
+        medium: [{ emoji: PLACEHOLDER_SCALE_EMOJIS[1] }],
+        high: [{ emoji: PLACEHOLDER_SCALE_EMOJIS[2] }],
+      };
+    }
+    // Nominal: a DISTINCT mark per category value (type "value") or per column
+    // role (type "column_name"), drawn from one shared per-chart sequence so
+    // marks shown together never collide.
+    const key =
+      value != null ? `${colName}::value::${value}` : `${colName}::col`;
+    return [{ emoji: nominalPlaceholderFor(key) }];
   }
 
   let emojis = [];
@@ -1827,11 +2025,19 @@ app.view("bar_chart_column_select", async ({ ack, view, body, client }) => {
   });
 
   // ---- async update with real emoji recommendations ----
-  (async () => {
+  runDetached("Bar recommendation modal update failed", async () => {
+    if (!isCurrentTaskMetadata(private_metadata)) {
+      logSkippedStaleModalUpdate("bar", private_metadata.taskId);
+      return;
+    }
     const tableData = { headers, rows };
     const tableDescription = chartTitle || "Bar chart";
 
     const recommendations = await recommendEmojis(tableData, tableDescription);
+    if (!isCurrentTaskMetadata(private_metadata)) {
+      logSkippedStaleModalUpdate("bar", private_metadata.taskId);
+      return;
+    }
     const labelRecs = getRecEmojiOptions(
       recommendations,
       labelCol,
@@ -1983,26 +2189,33 @@ app.view("bar_chart_column_select", async ({ ack, view, body, client }) => {
       },
     ];
 
-    await client.views.update({
-      external_id: "emoji_chart_modal_bar",
-      view: {
-        type: "modal",
-        callback_id: "post_final_message",
-        title: { type: "plain_text", text: "Bar Chart Builder", emoji: true },
-        submit: { type: "plain_text", text: "Finish", emoji: true },
-        close: { type: "plain_text", text: "Back", emoji: true },
-        private_metadata: JSON.stringify({
-          ...private_metadata,
-          labelCol,
-          valueCol,
-          labelEmoji,
-          valueEmoji,
-          preview: updatedPreview,
-        }),
-        blocks: updatedBlocks,
-      },
-    });
-  })();
+    try {
+      await client.views.update({
+        external_id: "emoji_chart_modal_bar",
+        view: {
+          type: "modal",
+          callback_id: "post_final_message",
+          title: { type: "plain_text", text: "Bar Chart Builder", emoji: true },
+          submit: { type: "plain_text", text: "Finish", emoji: true },
+          close: { type: "plain_text", text: "Back", emoji: true },
+          private_metadata: JSON.stringify({
+            ...private_metadata,
+            labelCol,
+            valueCol,
+            labelEmoji,
+            valueEmoji,
+            preview: updatedPreview,
+          }),
+          blocks: updatedBlocks,
+        },
+      });
+    } catch (error) {
+      console.warn(
+        "Skipping bar recommendation modal update:",
+        error?.data?.error || error?.message || error,
+      );
+    }
+  });
 });
 
 /// SINGLE VALUE CHART ///
@@ -2415,11 +2628,19 @@ app.view("single_value_column_select", async ({ ack, view, body, client }) => {
   });
 
   // ---- async update with real recs ----
-  (async () => {
+  runDetached("Single-value recommendation modal update failed", async () => {
+    if (!isCurrentTaskMetadata(private_metadata)) {
+      logSkippedStaleModalUpdate("single-value", private_metadata.taskId);
+      return;
+    }
     const tableData = { headers, rows };
     const tableDescription = chartTitle || "Data visualization";
 
     const suggestions = await recommendEmojis(tableData, tableDescription);
+    if (!isCurrentTaskMetadata(private_metadata)) {
+      logSkippedStaleModalUpdate("single-value", private_metadata.taskId);
+      return;
+    }
     const valueEmojiGroups = getRecEmojiOptions(suggestions, valueCol, "scale");
     const labelRecs = getRecEmojiOptions(suggestions, labelCol, "column_name");
 
@@ -2482,7 +2703,10 @@ app.view("single_value_column_select", async ({ ack, view, body, client }) => {
         accessory: {
           type: "static_select",
           action_id: "low_emoji_svc",
-          options: valueEmojiGroups.low.map((e) => ({
+          options: (valueEmojiGroups.low.length > 0
+            ? valueEmojiGroups.low
+            : [{ emoji: lowEmoji }]
+          ).map((e) => ({
             text: { type: "plain_text", text: e.emoji },
             value: e.emoji,
           })),
@@ -2508,7 +2732,10 @@ app.view("single_value_column_select", async ({ ack, view, body, client }) => {
         accessory: {
           type: "static_select",
           action_id: "medium_emoji_svc",
-          options: valueEmojiGroups.medium.map((e) => ({
+          options: (valueEmojiGroups.medium.length > 0
+            ? valueEmojiGroups.medium
+            : [{ emoji: mediumEmoji }]
+          ).map((e) => ({
             text: { type: "plain_text", text: e.emoji },
             value: e.emoji,
           })),
@@ -2534,7 +2761,10 @@ app.view("single_value_column_select", async ({ ack, view, body, client }) => {
         accessory: {
           type: "static_select",
           action_id: "high_emoji_svc",
-          options: valueEmojiGroups.high.map((e) => ({
+          options: (valueEmojiGroups.high.length > 0
+            ? valueEmojiGroups.high
+            : [{ emoji: highEmoji }]
+          ).map((e) => ({
             text: { type: "plain_text", text: e.emoji },
             value: e.emoji,
           })),
@@ -2594,30 +2824,37 @@ app.view("single_value_column_select", async ({ ack, view, body, client }) => {
       },
     ];
 
-    await client.views.update({
-      external_id: "emoji_chart_modal_svc",
-      view: {
-        type: "modal",
-        callback_id: "post_final_message",
-        title: { type: "plain_text", text: "Single Value Chart", emoji: true },
-        submit: { type: "plain_text", text: "Finish", emoji: true },
-        close: { type: "plain_text", text: "Back", emoji: true },
-        private_metadata: JSON.stringify({
-          ...private_metadata,
-          labelCol,
-          valueCol,
-          minRange,
-          maxRange,
-          labelEmoji: "none",
-          lowEmoji,
-          mediumEmoji,
-          highEmoji,
-          preview: updatedPreview,
-        }),
-        blocks: updatedBlocks,
-      },
-    });
-  })();
+    try {
+      await client.views.update({
+        external_id: "emoji_chart_modal_svc",
+        view: {
+          type: "modal",
+          callback_id: "post_final_message",
+          title: { type: "plain_text", text: "Single Value Chart", emoji: true },
+          submit: { type: "plain_text", text: "Finish", emoji: true },
+          close: { type: "plain_text", text: "Back", emoji: true },
+          private_metadata: JSON.stringify({
+            ...private_metadata,
+            labelCol,
+            valueCol,
+            minRange,
+            maxRange,
+            labelEmoji: "none",
+            lowEmoji,
+            mediumEmoji,
+            highEmoji,
+            preview: updatedPreview,
+          }),
+          blocks: updatedBlocks,
+        },
+      });
+    } catch (error) {
+      console.warn(
+        "Skipping single-value recommendation modal update:",
+        error?.data?.error || error?.message || error,
+      );
+    }
+  });
 });
 
 // TREND CHART //
@@ -2948,6 +3185,231 @@ app.view("trend_chart_column_select", async ({ ack, view, body, client }) => {
     preview: placeholderPreview,
   });
 
+  const buildFinalTrendModal = ({ valueEmojiGroups, labelRecs }) => {
+    const lowEmoji = valueEmojiGroups.low[0]?.emoji || "📉";
+    const mediumEmoji = valueEmojiGroups.medium[0]?.emoji || "😐";
+    const highEmoji = valueEmojiGroups.high[0]?.emoji || "📈";
+
+    const updatedPreview = generateTrendChartPreview({
+      entries,
+      labelEmoji: "none",
+      labelCol,
+      lowEmoji,
+      mediumEmoji,
+      highEmoji,
+      showLabelEmoji: false,
+      showLegend: false,
+      minRange,
+      maxRange,
+      chartTitle,
+      showTitle: true,
+    });
+
+    const updatedBlocks = [
+      {
+        type: "section",
+        block_id: `label_emoji_block_tc_${Date.now()}`,
+        text: {
+          type: "mrkdwn",
+          text: `Emoji recommendation for the label column (${labelCol})`,
+        },
+        accessory: {
+          type: "static_select",
+          action_id: "label_emoji_tc",
+          options: [
+            { text: { type: "plain_text", text: "No label" }, value: "none" },
+            ...labelRecs.map((e) => ({
+              text: { type: "plain_text", text: e.emoji },
+              value: e.emoji,
+            })),
+          ],
+          initial_option: {
+            text: {
+              type: "plain_text",
+              text: "No label",
+            },
+            value: "none",
+          },
+        },
+      },
+      makeCustomEmojiInput(
+        "custom_label_emoji_tc",
+        "custom_label_emoji_tc_block",
+      ),
+      {
+        type: "divider",
+      },
+      {
+        type: "section",
+        block_id: `low_emoji_block_tc_${Date.now()}`,
+        text: {
+          type: "mrkdwn",
+          text: `Low value emoji recommendation for ${valueCol}`,
+        },
+        accessory: {
+          type: "static_select",
+          action_id: "low_emoji_tc",
+          options: (valueEmojiGroups.low.length > 0
+            ? valueEmojiGroups.low
+            : [{ emoji: lowEmoji }]
+          ).map((e) => ({
+            text: { type: "plain_text", text: e.emoji },
+            value: e.emoji,
+          })),
+          initial_option: {
+            text: { type: "plain_text", text: lowEmoji },
+            value: lowEmoji,
+          },
+        },
+      },
+      makeCustomEmojiInput("custom_low_emoji_tc", "custom_low_emoji_tc_block"),
+      {
+        type: "divider",
+      },
+      {
+        type: "section",
+        block_id: `medium_emoji_block_tc_${Date.now()}`,
+        text: {
+          type: "mrkdwn",
+          text: `Medium value emoji recommendation for ${valueCol}`,
+        },
+        accessory: {
+          type: "static_select",
+          action_id: "medium_emoji_tc",
+          options: (valueEmojiGroups.medium.length > 0
+            ? valueEmojiGroups.medium
+            : [{ emoji: mediumEmoji }]
+          ).map((e) => ({
+            text: { type: "plain_text", text: e.emoji },
+            value: e.emoji,
+          })),
+          initial_option: {
+            text: { type: "plain_text", text: mediumEmoji },
+            value: mediumEmoji,
+          },
+        },
+      },
+      makeCustomEmojiInput(
+        "custom_medium_emoji_tc",
+        "custom_medium_emoji_tc_block",
+      ),
+      {
+        type: "divider",
+      },
+      {
+        type: "section",
+        block_id: `high_emoji_block_tc_${Date.now()}`,
+        text: {
+          type: "mrkdwn",
+          text: `High value emoji recommendation for ${valueCol}`,
+        },
+        accessory: {
+          type: "static_select",
+          action_id: "high_emoji_tc",
+          options: (valueEmojiGroups.high.length > 0
+            ? valueEmojiGroups.high
+            : [{ emoji: highEmoji }]
+          ).map((e) => ({
+            text: { type: "plain_text", text: e.emoji },
+            value: e.emoji,
+          })),
+          initial_option: {
+            text: { type: "plain_text", text: highEmoji },
+            value: highEmoji,
+          },
+        },
+      },
+      makeCustomEmojiInput(
+        "custom_high_emoji_tc",
+        "custom_high_emoji_tc_block",
+      ),
+      {
+        type: "divider",
+      },
+      {
+        type: "section",
+        block_id: "show_title_block_tc",
+        text: { type: "mrkdwn", text: "*Show chart title?*" },
+        accessory: {
+          type: "checkboxes",
+          action_id: "show_title_checkbox_tc",
+          options: [
+            {
+              text: { type: "plain_text", text: "Show chart title" },
+              value: "show",
+            },
+          ],
+          initial_options: [
+            {
+              text: { type: "plain_text", text: "Show chart title" },
+              value: "show",
+            },
+          ],
+        },
+      },
+      {
+        type: "section",
+        block_id: "show_legend_block_tc",
+        text: { type: "mrkdwn", text: "*Show legend?*" },
+        accessory: {
+          type: "checkboxes",
+          action_id: "show_legend_tc",
+          options: [
+            {
+              text: { type: "plain_text", text: "Show legend" },
+              value: "show",
+            },
+          ],
+        },
+      },
+      {
+        type: "section",
+        block_id: "preview_block_tc",
+        text: { type: "mrkdwn", text: "```\n" + updatedPreview + "\n```" },
+      },
+    ];
+
+    return {
+      preview: updatedPreview,
+      lowEmoji,
+      mediumEmoji,
+      highEmoji,
+      blocks: updatedBlocks,
+    };
+  };
+
+  if (getActiveVariant() !== "semantic") {
+    const valueEmojiGroups = getRecEmojiOptions({}, valueCol, "scale");
+    const labelRecs = getRecEmojiOptions({}, labelCol, "column_name");
+    const finalModal = buildFinalTrendModal({ valueEmojiGroups, labelRecs });
+
+    await ack({
+      response_action: "push",
+      view: {
+        type: "modal",
+        external_id: "emoji_chart_modal_trend",
+        callback_id: "post_final_message",
+        private_metadata: JSON.stringify({
+          ...private_metadata,
+          labelCol,
+          valueCol,
+          minRange,
+          maxRange,
+          labelEmoji: "none",
+          lowEmoji: finalModal.lowEmoji,
+          mediumEmoji: finalModal.mediumEmoji,
+          highEmoji: finalModal.highEmoji,
+          preview: finalModal.preview,
+        }),
+        title: { type: "plain_text", text: "Trend Chart", emoji: true },
+        submit: { type: "plain_text", text: "Finish", emoji: true },
+        close: { type: "plain_text", text: "Back", emoji: true },
+        blocks: transformBlocksForVariant(finalModal.blocks),
+      },
+    });
+    return;
+  }
+
   // ---- load modal with placeholders ----
   await ack({
     response_action: "push",
@@ -3034,11 +3496,19 @@ app.view("trend_chart_column_select", async ({ ack, view, body, client }) => {
   });
 
   // ---- generate recommendations ----
-  (async () => {
+  runDetached("Trend recommendation modal update failed", async () => {
+    if (!isCurrentTaskMetadata(private_metadata)) {
+      logSkippedStaleModalUpdate("trend", private_metadata.taskId);
+      return;
+    }
     const tableData = { headers, rows };
     const tableDescription = chartTitle || "Data visualization";
 
     const suggestions = await recommendEmojis(tableData, tableDescription);
+    if (!isCurrentTaskMetadata(private_metadata)) {
+      logSkippedStaleModalUpdate("trend", private_metadata.taskId);
+      return;
+    }
     const valueEmojiGroups = getRecEmojiOptions(suggestions, valueCol, "scale");
     const labelRecs = getRecEmojiOptions(suggestions, labelCol, "column_name");
 
@@ -3105,7 +3575,10 @@ app.view("trend_chart_column_select", async ({ ack, view, body, client }) => {
         accessory: {
           type: "static_select",
           action_id: "low_emoji_tc",
-          options: valueEmojiGroups.low.map((e) => ({
+          options: (valueEmojiGroups.low.length > 0
+            ? valueEmojiGroups.low
+            : [{ emoji: lowEmoji }]
+          ).map((e) => ({
             text: { type: "plain_text", text: e.emoji },
             value: e.emoji,
           })),
@@ -3129,7 +3602,10 @@ app.view("trend_chart_column_select", async ({ ack, view, body, client }) => {
         accessory: {
           type: "static_select",
           action_id: "medium_emoji_tc",
-          options: valueEmojiGroups.medium.map((e) => ({
+          options: (valueEmojiGroups.medium.length > 0
+            ? valueEmojiGroups.medium
+            : [{ emoji: mediumEmoji }]
+          ).map((e) => ({
             text: { type: "plain_text", text: e.emoji },
             value: e.emoji,
           })),
@@ -3156,7 +3632,10 @@ app.view("trend_chart_column_select", async ({ ack, view, body, client }) => {
         accessory: {
           type: "static_select",
           action_id: "high_emoji_tc",
-          options: valueEmojiGroups.high.map((e) => ({
+          options: (valueEmojiGroups.high.length > 0
+            ? valueEmojiGroups.high
+            : [{ emoji: highEmoji }]
+          ).map((e) => ({
             text: { type: "plain_text", text: e.emoji },
             value: e.emoji,
           })),
@@ -3216,30 +3695,37 @@ app.view("trend_chart_column_select", async ({ ack, view, body, client }) => {
       },
     ];
 
-    await client.views.update({
-      external_id: "emoji_chart_modal_trend",
-      view: {
-        type: "modal",
-        callback_id: "post_final_message",
-        title: { type: "plain_text", text: "Trend Chart", emoji: true },
-        submit: { type: "plain_text", text: "Finish", emoji: true },
-        close: { type: "plain_text", text: "Back", emoji: true },
-        private_metadata: JSON.stringify({
-          ...private_metadata,
-          labelCol,
-          valueCol,
-          minRange,
-          maxRange,
-          labelEmoji: "none",
-          lowEmoji,
-          mediumEmoji,
-          highEmoji,
-          preview: updatedPreview,
-        }),
-        blocks: updatedBlocks,
-      },
-    });
-  })();
+    try {
+      await client.views.update({
+        external_id: "emoji_chart_modal_trend",
+        view: {
+          type: "modal",
+          callback_id: "post_final_message",
+          title: { type: "plain_text", text: "Trend Chart", emoji: true },
+          submit: { type: "plain_text", text: "Finish", emoji: true },
+          close: { type: "plain_text", text: "Back", emoji: true },
+          private_metadata: JSON.stringify({
+            ...private_metadata,
+            labelCol,
+            valueCol,
+            minRange,
+            maxRange,
+            labelEmoji: "none",
+            lowEmoji,
+            mediumEmoji,
+            highEmoji,
+            preview: updatedPreview,
+          }),
+          blocks: updatedBlocks,
+        },
+      });
+    } catch (error) {
+      console.warn(
+        "Skipping trend recommendation modal update:",
+        error?.data?.error || error?.message || error,
+      );
+    }
+  });
 });
 
 // PROPORTION CHART //
@@ -3628,11 +4114,19 @@ app.view(
     });
 
     // ---- Asynchronously replace placeholders with real recommendations ----
-    (async () => {
+    runDetached("Proportion recommendation modal update failed", async () => {
+      if (!isCurrentTaskMetadata(private_metadata)) {
+        logSkippedStaleModalUpdate("proportion", private_metadata.taskId);
+        return;
+      }
       const tableData = { headers, rows };
       const tableDescription = chartTitle || "Data visualization";
       const realEmojiMap = {};
       const suggestions = await recommendEmojis(tableData, tableDescription);
+      if (!isCurrentTaskMetadata(private_metadata)) {
+        logSkippedStaleModalUpdate("proportion", private_metadata.taskId);
+        return;
+      }
 
       for (const label of topFive) {
         const recs = getRecEmojiOptions(
@@ -3645,6 +4139,29 @@ app.view(
         realEmojiMap[label] = recs[0]?.emoji || "❓";
       }
 
+      // In the placeholder condition the "Other" category gets a single distinct
+      // non-semantic mark (drawn from the same per-chart nominal sequence as the
+      // top-five categories) so there is nothing to choose; the other conditions
+      // keep the hardcoded list of generic symbols.
+      const otherPlaceholder =
+        getActiveVariant() === "placeholder"
+          ? nominalPlaceholderFor(`${labelCol}::value::__other__`)
+          : null;
+      const otherEmojiOptions = otherPlaceholder
+        ? [{ emoji: otherPlaceholder }]
+        : [
+            { emoji: "⬜️" }, // options for the "Other" category are hardcoded for now
+            { emoji: "⬛️" },
+            { emoji: "⚪" },
+            { emoji: "⚫" },
+            { emoji: "✨" },
+            { emoji: "📦" },
+            { emoji: "❔" },
+          ];
+      const otherInitialEmoji = otherPlaceholder || "⬜️";
+
+      // Fill "Other" slots in the preview with the same mark shown as the
+      // "Other" dropdown's selected value so the graph text matches the control.
       const updatedPreview = generateProportionChartPreview({
         agg,
         emojiMap: realEmojiMap,
@@ -3652,7 +4169,7 @@ app.view(
         showTitle,
         showLegend,
         numEmojisPerLine,
-        defaultEmoji: "⬜️",
+        defaultEmoji: otherInitialEmoji,
       });
 
       const updatedBlocks = [
@@ -3687,7 +4204,14 @@ app.view(
                 accessory: {
                   type: "static_select",
                   action_id: `por_label_emoji_${i}`,
-                  options: recs.map((e) => ({
+                  // Always provide at least one option: when the backend returns
+                  // no recommendation for this value, fall back to the resolved
+                  // emoji (realEmojiMap[label], "❓" on failure) so Slack never
+                  // rejects an empty static_select.
+                  options: (recs.length > 0
+                    ? recs
+                    : [{ emoji: realEmojiMap[label] }]
+                  ).map((e) => ({
                     text: { type: "plain_text", text: e.emoji },
                     value: e.emoji,
                   })),
@@ -3732,21 +4256,13 @@ app.view(
           accessory: {
             type: "static_select",
             action_id: `por_label_emoji_other`,
-            options: [
-              { emoji: "⬜️" }, // options for the "Other" category are hardcoded for now
-              { emoji: "⬛️" },
-              { emoji: "⚪" },
-              { emoji: "⚫" },
-              { emoji: "✨" },
-              { emoji: "📦" },
-              { emoji: "❔" },
-            ].map((e) => ({
+            options: otherEmojiOptions.map((e) => ({
               text: { type: "plain_text", text: e.emoji },
               value: e.emoji,
             })),
             initial_option: {
-              text: { type: "plain_text", text: "⬜️" },
-              value: "⬜️",
+              text: { type: "plain_text", text: otherInitialEmoji },
+              value: otherInitialEmoji,
             },
           },
         },
@@ -3825,31 +4341,38 @@ app.view(
         },
       ];
 
-      await client.views.update({
-        external_id: "emoji_chart_modal",
-        view: {
-          type: "modal",
-          callback_id: "post_final_message",
-          title: {
-            type: "plain_text",
-            text: "Emoji Chart Builder",
-            emoji: true,
+      try {
+        await client.views.update({
+          external_id: "emoji_chart_modal",
+          view: {
+            type: "modal",
+            callback_id: "post_final_message",
+            title: {
+              type: "plain_text",
+              text: "Emoji Chart Builder",
+              emoji: true,
+            },
+            submit: { type: "plain_text", text: "Finish", emoji: true },
+            close: { type: "plain_text", text: "Back", emoji: true },
+            private_metadata: JSON.stringify({
+              ...private_metadata,
+              labelCol,
+              preview: updatedPreview,
+              emojiMap: realEmojiMap,
+              freqCol,
+              labels: topFive,
+              otherEmoji: otherInitialEmoji, // default for "Other" category
+            }),
+            blocks: updatedBlocks,
           },
-          submit: { type: "plain_text", text: "Finish", emoji: true },
-          close: { type: "plain_text", text: "Back", emoji: true },
-          private_metadata: JSON.stringify({
-            ...private_metadata,
-            labelCol,
-            preview: updatedPreview,
-            emojiMap: realEmojiMap,
-            freqCol,
-            labels: topFive,
-            otherEmoji: "⬜️", // default for "Other" category
-          }),
-          blocks: updatedBlocks,
-        },
-      });
-    })();
+        });
+      } catch (error) {
+        console.warn(
+          "Skipping proportion recommendation modal update:",
+          error?.data?.error || error?.message || error,
+        );
+      }
+    });
   },
 );
 
@@ -3917,4 +4440,7 @@ export {
   getStudyContext,
   startTask,
   finalizeTask,
+  resetPlaceholderAssignments,
+  PLACEHOLDER_NOMINAL_EMOJIS,
+  PLACEHOLDER_SCALE_EMOJIS,
 };

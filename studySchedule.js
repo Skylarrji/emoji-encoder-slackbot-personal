@@ -1,32 +1,25 @@
 // ===========================================================================
 // Study schedule (Latin square)  —  EDIT THIS FILE TO LOCK YOUR DESIGN
 // ===========================================================================
-// This file encodes the counterbalanced assignment of CONDITIONS to the three
-// chart-creation tasks. The bot reads it so the research assistant (URA) never
+// This file encodes the assignment of CONDITIONS to the three
+// chart-creation tasks. The bot reads it so the research assistant never
 // has to choose a condition by hand: they enter the participant's number, and
 // the bot auto-advances through that participant's row.
 //
 // HOW THE LATIN SQUARE WORKS
 //   - There are 3 creation tasks, presented in a FIXED order (Task 1, 2, 3).
-//     Each task has a fixed chart type / dataset / scenario; only the CONDITION
+//     Each task has a fixed chart type/dataset/scenario; only the CONDITION
 //     rotates across participants.
 //   - CONDITION_SQUARE has one row per participant GROUP. A participant's group
 //     is ((participantNumber - 1) % number_of_rows). Each row lists the
 //     condition used for Task 1, Task 2, Task 3 respectively.
 //   - The rows below are a balanced 3x3 Latin square: each condition appears
 //     once per row, and once in each task position across the three rows.
-//
-// TO LOCK YOUR DESIGN (Phase 0):
-//   1. Set the chart type / dataset / scenario for each of the 3 TASKS below.
-//   2. Confirm the CONDITION_SQUARE rows match the Schedule tab in your Google
-//      Sheet (they must agree exactly — this file is the source of truth).
-//   3. Assign each recruited participant a sequential number (1, 2, 3, ...).
-//      Participant N uses row ((N - 1) % 3).
 // ===========================================================================
 
 // The three creation tasks, in the fixed order they are presented to every
-// participant. Only `condition` rotates (via the Latin square); everything else
-// here is held constant across participants for that task slot.
+// participant. Only `condition` rotates (via the Latin square) which is automatically managed by the Slackbot; 
+// everything else here is held constant across participants for that task slot.
 export const TASKS = [
   {
     position: 1,

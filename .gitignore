@@ -1,6 +1,9 @@
 # Logs
 logs
 *.log
+
+# Run-sheet test harness output
+test/.test-logs/
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
