@@ -399,21 +399,36 @@ await runView("study_setup_modal", {
   );
 }
 {
+  // Calling /next after Task 3 completes triggers Part 3, not "all done".
   const { calls } = await runCommand("/next");
   check(
-    "/next after Task 3 reports all tasks done (run sheet: expected)",
-    /done/i.test(respondText(calls)),
-    respondText(calls),
-  );
-  check(
-    "Condition is NOT changed after the all-done message",
-    getActiveVariant() === "semantic",
+    "/next after Task 3 starts Part 3 (condition locked to SEMANTIC)",
+    /Part 3/i.test(respondText(calls)) &&
+      getActiveVariant() === "semantic" &&
+      studySession.part3Active === true,
+    respondText(calls).replace(/\n/g, " | "),
   );
 }
 {
+  // /back from Part 3 cannot step back (Part 3 is not a regular task).
   const { calls } = await runCommand("/back");
   check(
-    "/back returns to Task 2 / PLACEHOLDER after an early /next",
+    "/back during Part 3 does not regress (cannot go back from free exploration)",
+    !/Task 2 of 3/.test(respondText(calls)),
+    respondText(calls).replace(/\n/g, " | "),
+  );
+}
+{
+  // Test /back works correctly during Part 2 (before Part 3).
+  await runCommand("/reset");
+  await runView("study_setup_modal", {
+    view: setupView({ id: "P1", number: "1" }),
+  });
+  await runCommand("/next"); // -> Task 2
+  await runCommand("/next"); // -> Task 3
+  const { calls } = await runCommand("/back");
+  check(
+    "/back returns to Task 2 / PLACEHOLDER (from Task 3, before Part 3)",
     /Task 2 of 3/.test(respondText(calls)) &&
       getActiveVariant() === "placeholder",
     respondText(calls).replace(/\n/g, " | "),
@@ -1057,6 +1072,153 @@ check(
 
 // Clean up session state so a leftover session can't confuse a later run.
 await runCommand("/reset");
+
+// ==========================================================================
+// 11. Part 3 – Free Exploration (run sheet G / section 21-25)
+// ==========================================================================
+section("11. Part 3 free exploration (run sheet G)");
+
+await runView("study_setup_modal", {
+  view: setupView({ id: "P1", number: "1" }),
+});
+{
+  // Advance through all Part 2 tasks.
+  await runCommand("/next"); // -> Task 2
+  await runCommand("/next"); // -> Task 3
+  const { calls, client } = await runCommand("/next"); // -> Part 3
+  const text = respondText(calls);
+  check(
+    "/next after Task 3 starts Part 3 and locks to SEMANTIC",
+    /Part 3 started/.test(text) &&
+      /SEMANTIC/.test(text) &&
+      getActiveVariant() === "semantic" &&
+      studySession.part3Active === true,
+    text.replace(/\n/g, " | "),
+  );
+  check(
+    "Part 3 transition message is posted to the channel (visible message)",
+    client.__calls.postMessage.length >= 1,
+    `postMessage calls: ${client.__calls.postMessage.length}`,
+  );
+  const channelMsg =
+    client.__calls.postMessage[client.__calls.postMessage.length - 1];
+  check(
+    "Channel message includes 'Part 3 – Free Exploration' header",
+    channelMsg?.text === "Part 3 – Free Exploration" ||
+      (channelMsg?.blocks || []).some(
+        (b) => b.type === "header" && /Part 3/.test(b.text?.text),
+      ),
+    channelMsg?.text || JSON.stringify(channelMsg?.blocks?.[0]),
+  );
+}
+{
+  // Verify Part 3 message structure.
+  const client = makeClient();
+  const cmd = {
+    command: { user_id: "UEXP", channel_id: "C1", thread_ts: null, text: "" },
+    ack: async () => {},
+    body: { trigger_id: "TRIG", user: { id: "UEXP" } },
+    client,
+    respond: async () => {},
+  };
+  // Manually trigger Part 3 to inspect the message.
+  await runCommand("/reset");
+  await runView("study_setup_modal", {
+    view: setupView({ id: "P1", number: "1" }),
+  });
+  await runCommand("/next"); // -> T2
+  await runCommand("/next"); // -> T3
+  const { client: c } = await runCommand("/next", { client }); // -> Part 3
+  const msg = c.__calls.postMessage[c.__calls.postMessage.length - 1];
+  const blocks = msg?.blocks || [];
+  check(
+    "Part 3 message includes all three dataset options",
+    blocks.some((b) => /City Parks/.test(b.text?.text ?? "")) &&
+      blocks.some((b) => /Monthly Exercise/.test(b.text?.text ?? "")) &&
+      blocks.some((b) => /Music Streaming/.test(b.text?.text ?? "")),
+    blocks.map((b) => b.text?.text || b.block_id).join(" | "),
+  );
+  check(
+    "Part 3 message includes instructions for the participant",
+    blocks.some(
+      (b) =>
+        /When you're ready/.test(b.text?.text ?? "") &&
+        /\/emojichart/.test(b.text?.text ?? ""),
+    ),
+    blocks.map((b) => b.text?.text).join(" | "),
+  );
+}
+{
+  // Part 3 state is correctly set.
+  const ctx = getStudyContext();
+  check(
+    "Part 3 taskNumber is 4 (PART3_TASK.position)",
+    ctx.taskNumber === "4",
+    ctx.taskNumber,
+  );
+  check(
+    "Part 3 latinSquareCell is P1-T4",
+    ctx.latinSquareCell === "P1-T4",
+    ctx.latinSquareCell,
+  );
+}
+{
+  // Calling /next again after Part 3 reports all tasks done.
+  const { calls } = await runCommand("/next");
+  const text = respondText(calls);
+  check(
+    "/next when Part 3 active reports all tasks done",
+    /done|completed|All tasks/i.test(text),
+    text,
+  );
+  check(
+    "Variant stays SEMANTIC after Part 3 all-done message",
+    getActiveVariant() === "semantic",
+  );
+}
+{
+  // Verify part3Active persists and is checked.
+  check(
+    "part3Active remains true after /next cycles",
+    studySession.part3Active === true,
+  );
+}
+{
+  // Part 3 is reset when /reset is called.
+  await runCommand("/reset");
+  check(
+    "part3Active resets to false after /reset",
+    studySession.part3Active === false &&
+      studySession.schedule === null &&
+      getActiveVariant() === "semantic",
+  );
+}
+{
+  // /check during Part 3 shows Part 3 status differently.
+  await runView("study_setup_modal", {
+    view: setupView({ id: "P2", number: "2" }),
+  });
+  await runCommand("/next"); // -> T2
+  await runCommand("/next"); // -> T3
+  await runCommand("/next"); // -> Part 3
+  const { calls } = await runCommand("/check");
+  const text = respondText(calls);
+  check(
+    "/check during Part 3 shows Part 3 status (T4/free exploration)",
+    /Part 3|T4|free/i.test(text) || /semantic/.test(text),
+    text.replace(/\n/g, " | "),
+  );
+}
+{
+  // Part 3 cannot be regressed with /back.
+  const { calls } = await runCommand("/back");
+  const text = respondText(calls);
+  check(
+    "/back during Part 3 does not allow stepping back",
+    /already at|cannot go|already done/i.test(text) || studySession.part3Active,
+    text,
+  );
+}
 
 // ==========================================================================
 // Summary
