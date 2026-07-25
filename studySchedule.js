@@ -84,6 +84,40 @@ function validateSquare() {
 }
 validateSquare();
 
+// Part 3 — Free Exploration (always semantic; participant chooses dataset and chart type).
+export const PART3_TASK = {
+  position: 4,
+  chartType: "choice",
+  condition: "semantic",
+  datasetTopic:
+    "Open-ended exploration — part3_city_parks.csv / part3_monthly_exercise.csv / part3_music_genres.csv",
+  scenario:
+    "Choose any of the three datasets and any chart type. AI emoji recommendations are active.",
+  datasetOptions: [
+    {
+      id: "A",
+      name: "City Parks",
+      file: "part3_city_parks.csv",
+      description:
+        "Usage stats across 5 local parks — visitors, sports users, event attendees, volunteer hours, maintenance cost, and satisfaction score.",
+    },
+    {
+      id: "B",
+      name: "Monthly Exercise Log",
+      file: "part3_monthly_exercise.csv",
+      description:
+        "Monthly fitness data across the year — running, cycling, swimming, yoga, strength training, and active days.",
+    },
+    {
+      id: "C",
+      name: "Music Streaming Genres",
+      file: "part3_music_genres.csv",
+      description:
+        "Streaming stats across 5 music genres — monthly plays, unique listeners, new releases, average song length, playlist adds, and top artist streams.",
+    },
+  ],
+};
+
 // Build the ordered list of tasks for a given participant NUMBER (1-based).
 // Returns an array of { position, condition, chartType, datasetTopic, scenario }.
 // Throws on a non-positive-integer number so the modal can show a clear error.

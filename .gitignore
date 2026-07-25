@@ -4,6 +4,10 @@ logs
 
 # Run-sheet test harness output
 test/.test-logs/
+
+# Study session logs
+study-logs/
+
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*

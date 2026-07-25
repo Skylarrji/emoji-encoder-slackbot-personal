@@ -8,7 +8,11 @@ import axios from "axios";
 import express from "express";
 import { fileURLToPath } from "url";
 import { logEvent } from "./studyLog.js";
-import { getParticipantSchedule, describeSchedule } from "./studySchedule.js";
+import {
+  getParticipantSchedule,
+  describeSchedule,
+  PART3_TASK,
+} from "./studySchedule.js";
 
 const app = new App({
   token: process.env.SLACK_BOT_TOKEN,
@@ -20,10 +24,7 @@ const runDetached = (label, task) => {
   Promise.resolve()
     .then(task)
     .catch((error) => {
-      console.warn(
-        `${label}:`,
-        error?.data?.error || error?.message || error,
-      );
+      console.warn(`${label}:`, error?.data?.error || error?.message || error);
     });
 };
 
@@ -88,7 +89,8 @@ const manualChooseLabel = (text) => {
   return "Choose an emoji";
 };
 
-const isOptionalManualEmojiInput = (actionId) => actionId === "custom_label_emoji_tc";
+const isOptionalManualEmojiInput = (actionId) =>
+  actionId === "custom_label_emoji_tc";
 
 // Rewrite a block array for the manual condition (see comment above).
 const manualizeBlocks = (blocks) => {
@@ -281,6 +283,7 @@ const studySession = {
   datasetTopic: null,
   taskNumber: null,
   latinSquareCell: null,
+  part3Active: false, // true once Part 3 free-exploration has started
   updatedAt: null,
 };
 
@@ -318,6 +321,7 @@ function resetStudySession() {
   studySession.datasetTopic = null;
   studySession.taskNumber = null;
   studySession.latinSquareCell = null;
+  studySession.part3Active = false;
   studySession.updatedAt = null;
   resetPlaceholderAssignments();
 }
@@ -340,6 +344,7 @@ function getStudyContext() {
     taskIndex: studySession.taskIndex,
     taskCount: studySession.schedule ? studySession.schedule.length : null,
     latinSquareCell: studySession.latinSquareCell,
+    part3Active: studySession.part3Active,
   };
 }
 
@@ -370,7 +375,9 @@ function startTask(meta = {}) {
 }
 
 function isCurrentTaskMetadata(privateMetadata = {}) {
-  return !privateMetadata.taskId || currentTask?.taskId === privateMetadata.taskId;
+  return (
+    !privateMetadata.taskId || currentTask?.taskId === privateMetadata.taskId
+  );
 }
 
 function logSkippedStaleModalUpdate(chartType, taskId) {
@@ -666,12 +673,57 @@ function studyStatusText() {
       `• Run \`/setup\` to load a participant.`
     );
   }
+  if (studySession.part3Active) {
+    return (
+      `*Participant ${ctx.participantId ?? "-"}* (number ${ctx.participantNumber})\n` +
+      `• ➤ *Part 3 – Free Exploration*  ·  condition *SEMANTIC* (locked)\n` +
+      `• Dataset-choice message has been posted to the channel.\n` +
+      `• Updated: \`${studySession.updatedAt ?? "-"}\``
+    );
+  }
   return (
     `*Participant ${ctx.participantId ?? "-"}* (number ${ctx.participantNumber})\n` +
     `• ➤ *Task ${ctx.taskNumber} of ${ctx.taskCount}*  ·  chart \`${ctx.chartDataType}\`  ·  condition *${String(ctx.variant).toUpperCase()}*\n` +
     `• Full schedule: \`${describeSchedule(ctx.participantNumber)}\`\n` +
     `• Updated: \`${studySession.updatedAt ?? "-"}\``
   );
+}
+
+// Build the visible channel message posted to participants at the start of Part 3.
+function buildPart3Message() {
+  const datasetList = PART3_TASK.datasetOptions
+    .map((d) => `*${d.id}. ${d.name}*\n${d.description}\nFile: \`${d.file}\``)
+    .join("\n\n");
+  return {
+    text: "Part 3 – Free Exploration",
+    blocks: [
+      {
+        type: "header",
+        text: { type: "plain_text", text: "Part 3 – Free Exploration", emoji: true },
+      },
+      {
+        type: "section",
+        text: {
+          type: "mrkdwn",
+          text: "For this final task you can choose *any dataset* and *any chart type* you like. AI emoji recommendations are active.",
+        },
+      },
+      {
+        type: "section",
+        text: {
+          type: "mrkdwn",
+          text: `*Available datasets:*\n\n${datasetList}`,
+        },
+      },
+      {
+        type: "section",
+        text: {
+          type: "mrkdwn",
+          text: "*When you're ready:*\n1. Pick a dataset and ask the experimenter for the CSV file.\n2. Paste its contents into `/emojichart`.\n3. Choose your preferred chart type and columns.\n4. Assign emojis using the AI suggestions.",
+        },
+      },
+    ],
+  };
 }
 
 app.command("/check", async ({ command, ack, respond }) => {
@@ -689,7 +741,7 @@ app.command("/check", async ({ command, ack, respond }) => {
 });
 
 // Advance to the next scheduled creation task (auto-sets that task's condition).
-app.command("/next", async ({ command, ack, respond }) => {
+app.command("/next", async ({ command, ack, respond, client }) => {
   await ack();
 
   if (!isExperimenter(command.user_id)) {
@@ -710,12 +762,32 @@ app.command("/next", async ({ command, ack, respond }) => {
 
   const next = (studySession.taskIndex ?? -1) + 1;
   if (next >= studySession.schedule.length) {
-    await respond({
-      response_type: "ephemeral",
-      text:
-        `:checkered_flag: All ${studySession.schedule.length} creation tasks are done for ` +
-        `\`${studySession.participantId}\`. Run \`/reset\` before the next participant.`,
-    });
+    if (!studySession.part3Active) {
+      // All Part 2 creation tasks are done — start Part 3 free exploration.
+      studySession.part3Active = true;
+      studySession.variant = "semantic";
+      studySession.chartDataType = PART3_TASK.chartType;
+      studySession.datasetTopic = PART3_TASK.datasetTopic;
+      studySession.taskNumber = String(PART3_TASK.position);
+      studySession.latinSquareCell = `P${studySession.participantNumber}-T${PART3_TASK.position}`;
+      studySession.updatedAt = new Date().toISOString();
+      logEvent("part3_start", { context: getStudyContext() });
+      await client.chat.postMessage({
+        channel: command.channel_id,
+        ...buildPart3Message(),
+      });
+      await respond({
+        response_type: "ephemeral",
+        text: `:rocket: Part 3 started — condition locked to *SEMANTIC*.\n${studyStatusText()}`,
+      });
+    } else {
+      await respond({
+        response_type: "ephemeral",
+        text:
+          `:checkered_flag: All tasks (including Part 3) are done for ` +
+          `\`${studySession.participantId}\`. Run \`/reset\` before the next participant.`,
+      });
+    }
     return;
   }
 
@@ -1003,12 +1075,32 @@ const makeCustomEmojiInput = (actionId, blockId) => ({
     initial_value: "",
     placeholder: {
       type: "plain_text",
-      text: "Type a custom emoji to override",
+      text: "Type a custom emoji and press Enter to override",
     },
   },
   dispatch_action: true,
   optional: true,
 });
+
+// Pressing Enter in a Slack modal text input silently dispatches the action —
+// there is no built-in toast/notification, so participants can easily miss
+// that their override was applied. After a custom emoji is validated and
+// applied, make the effect visible by rewriting the input's own label to show
+// a checkmark confirmation (cleared again by resetCustomEmojiBlock whenever a
+// dropdown selection takes over instead). Mutates the given blocks array.
+const annotateAppliedCustomEmoji = (blocks, triggeredId, customValue) => {
+  if (!triggeredId?.startsWith("custom_") || !customValue) return;
+  const idx = blocks.findIndex((b) => b.element?.action_id === triggeredId);
+  if (idx === -1) return;
+  blocks[idx] = {
+    ...blocks[idx],
+    label: {
+      type: "plain_text",
+      text: `Override with a custom emoji  ✅ Applied: ${customValue}`,
+    },
+    element: { ...blocks[idx].element, initial_value: customValue },
+  };
+};
 
 // Replace a custom-emoji input block (matched by prefix) with a fresh, empty one
 // so its previous override value is cleared. Mutates the given blocks array.
@@ -1671,10 +1763,19 @@ function _getRecEmojiOptions(recommendations, colName, type, value = null) {
     }
     // Nominal: a DISTINCT mark per category value (type "value") or per column
     // role (type "column_name"), drawn from one shared per-chart sequence so
-    // marks shown together never collide.
+    // marks shown together never collide. The participant can still pick a
+    // different neutral colour for this slot from the same palette (via the
+    // existing recommendation dropdown) — only the MEANING stays fixed, not
+    // the specific hue, so this remains non-semantic. The auto-assigned mark
+    // is listed first so it stays the default unless the participant changes it.
     const key =
       value != null ? `${colName}::value::${value}` : `${colName}::col`;
-    return [{ emoji: nominalPlaceholderFor(key) }];
+    const assigned = nominalPlaceholderFor(key);
+    const palette = PLACEHOLDER_NOMINAL_EMOJIS.length
+      ? PLACEHOLDER_NOMINAL_EMOJIS
+      : [PLACEHOLDER_EMOJI];
+    const ordered = [assigned, ...palette.filter((e) => e !== assigned)];
+    return ordered.map((e) => ({ emoji: e }));
   }
 
   let emojis = [];
@@ -1773,7 +1874,13 @@ function generateBarChartPreview({
     .join("\n");
 
   if (showLegend && valueEmoji) {
-    preview += `\n\nLegend: ${valueEmoji} = ${legendLabel || valueCol}`;
+    // Show the scale represented by a single mark (e.g. "1 🍕 ≈ 14 cups sold")
+    // so the pictogram's magnitude, not just its ranking, is legible.
+    const unitPerEmoji = maxValue / maxEmojis;
+    const unitLabel = Number.isInteger(unitPerEmoji)
+      ? unitPerEmoji
+      : unitPerEmoji.toFixed(1);
+    preview += `\n\nLegend: ${valueEmoji} = ${legendLabel || valueCol} (1 ${valueEmoji} ≈ ${unitLabel})`;
   }
   if (showTitle && chartTitle) {
     preview = `${chartTitle}\n\n${preview}`;
@@ -1850,6 +1957,8 @@ barChartEmojiActions.forEach((actionId) => {
       customValue = action.value?.trim();
       if (customValue) valueEmoji = customValue;
     }
+
+    annotateAppliedCustomEmoji(blocks, triggeredId, customValue);
 
     const showLegend = readCheckbox(
       state,
@@ -2394,6 +2503,8 @@ singleValueChartEmojiActions.forEach((actionId) => {
       if (customValue) highEmoji = customValue;
     }
 
+    annotateAppliedCustomEmoji(blocks, triggeredId, customValue);
+
     const showLegend = readCheckbox(
       state,
       "show_legend_block_svc",
@@ -2830,7 +2941,11 @@ app.view("single_value_column_select", async ({ ack, view, body, client }) => {
         view: {
           type: "modal",
           callback_id: "post_final_message",
-          title: { type: "plain_text", text: "Single Value Chart", emoji: true },
+          title: {
+            type: "plain_text",
+            text: "Single Value Chart",
+            emoji: true,
+          },
           submit: { type: "plain_text", text: "Finish", emoji: true },
           close: { type: "plain_text", text: "Back", emoji: true },
           private_metadata: JSON.stringify({
@@ -3017,6 +3132,8 @@ trendChartEmojiActions.forEach((actionId) => {
       customValue = action.value?.trim();
       if (customValue) highEmoji = customValue;
     }
+
+    annotateAppliedCustomEmoji(blocks, triggeredId, customValue);
 
     const showLegend = readCheckbox(
       state,
@@ -3789,6 +3906,12 @@ function generateProportionChartPreview({
       legend += `, ${defaultEmoji} = Other`;
     }
 
+    const pctPerMark = 100 / totalSlots;
+    const pctStr = Number.isInteger(pctPerMark)
+      ? pctPerMark
+      : pctPerMark.toFixed(1);
+    legend += ` (each mark ≈ ${pctStr}% of total)`;
+
     preview += `\n\nLegend: ${legend}`;
   }
 
@@ -3948,6 +4071,7 @@ proportionChartEmojiActions.forEach((actionId) => {
     });
 
     const blocks = [...view.blocks];
+    annotateAppliedCustomEmoji(blocks, triggeredId, customValue);
     const previewIdx = blocks.findIndex(
       (b) => b.block_id === "preview_block_por",
     );
@@ -4042,7 +4166,7 @@ app.view(
       view: {
         type: "modal",
         callback_id: "post_final_message",
-        external_id: "emoji_chart_modal",
+        external_id: "emoji_chart_modal_por",
         private_metadata: new_private_metadata,
         title: { type: "plain_text", text: "Emoji Chart Builder", emoji: true },
         submit: { type: "plain_text", text: "Finish", emoji: true },
@@ -4221,25 +4345,7 @@ app.view(
                   },
                 },
               },
-              {
-                type: "input",
-                block_id: `custom_label_emoji_block_${i}`,
-                label: {
-                  type: "plain_text",
-                  text: `Override with a custom emoji`,
-                },
-                element: {
-                  type: "plain_text_input",
-                  action_id: `custom_por_label_emoji_${i}`,
-                  initial_value: "",
-                  placeholder: {
-                    type: "plain_text",
-                    text: "Type a custom emoji to override",
-                  },
-                },
-                dispatch_action: true,
-                optional: true,
-              },
+              makeCustomEmojiInput(`custom_por_label_emoji_${i}`, `custom_label_emoji_block_${i}`),
               {
                 type: "divider",
               },
@@ -4266,25 +4372,7 @@ app.view(
             },
           },
         },
-        {
-          type: "input",
-          block_id: `custom_label_emoji_block_other`,
-          label: {
-            type: "plain_text",
-            text: `Override with a custom emoji`,
-          },
-          element: {
-            type: "plain_text_input",
-            action_id: `custom_por_label_emoji_other`,
-            initial_value: "",
-            placeholder: {
-              type: "plain_text",
-              text: "Type a custom emoji to override",
-            },
-          },
-          dispatch_action: true,
-          optional: true,
-        },
+        makeCustomEmojiInput(`custom_por_label_emoji_other`, `custom_label_emoji_block_other`),
         {
           type: "divider",
         },
@@ -4343,7 +4431,7 @@ app.view(
 
       try {
         await client.views.update({
-          external_id: "emoji_chart_modal",
+          external_id: "emoji_chart_modal_por",
           view: {
             type: "modal",
             callback_id: "post_final_message",

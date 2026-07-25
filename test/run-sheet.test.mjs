@@ -473,8 +473,14 @@ studySession.variant = "placeholder";
   resetPlaceholderAssignments();
   const opt = getRecEmojiOptions(sampleRecs, "Genre", "column_name");
   check(
-    "PLACEHOLDER: a nominal slot shows a non-semantic mark from the neutral set",
-    opt.length === 1 && PLACEHOLDER_NOMINAL_EMOJIS.includes(opt[0].emoji),
+    // The participant can now choose their own neutral colour for this slot
+    // (feedback: "let the user choose the colours of the placeholder emojis
+    // through a selection dropdown"), so every option in the palette is
+    // offered — with the auto-assigned mark listed first as the default.
+    "PLACEHOLDER: a nominal slot offers the full neutral colour palette, auto-assigned mark first",
+    opt.length === PLACEHOLDER_NOMINAL_EMOJIS.length &&
+      opt.every((o) => PLACEHOLDER_NOMINAL_EMOJIS.includes(o.emoji)) &&
+      new Set(opt.map((o) => o.emoji)).size === opt.length,
     JSON.stringify(opt),
   );
 }
@@ -836,8 +842,7 @@ const trendSlotBlocks = () => [
   const { calls } = await runView("trend_chart_column_select", {
     view: {
       private_metadata: JSON.stringify({
-        rawTableData:
-          "month,units sold\nJanuary,180\nFebruary,210\nMarch,340",
+        rawTableData: "month,units sold\nJanuary,180\nFebruary,210\nMarch,340",
         chartTitle: "Ice-cream sales by month across the year",
         taskId: "manual-trend-test",
       }),
